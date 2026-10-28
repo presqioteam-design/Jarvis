@@ -1,10 +1,12 @@
 import hmac
+import logging
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from ..config import get_settings
 from ..services import chat, telegram
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/telegram", tags=["telegram"])
 
 
@@ -25,6 +27,11 @@ async def webhook(request: Request, x_telegram_bot_api_secret_token: str = Heade
     if not text or chat_id != s.telegram_chat_id:
         return {"ok": True}
 
-    reply = await chat.handle(text, channel="telegram")
+    # always answer 200: on an error Telegram would resend the update and duplicate the message
+    try:
+        reply = await chat.handle(text, channel="telegram")
+    except Exception:
+        log.exception("Chat failed for Telegram message")
+        reply = "Sorry, I hit an error answering that. Try again in a minute."
     await telegram.send(reply)
     return {"ok": True}

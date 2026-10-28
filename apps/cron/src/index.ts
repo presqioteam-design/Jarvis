@@ -10,9 +10,7 @@ export interface Env {
 }
 
 const JOBS: Record<string, string> = {
-  "30 2 * * MON-FRI": "/jobs/morning-brief",
-  "30 4-12 * * MON-FRI": "/jobs/focus-check",
-  "30 13 * * MON-FRI": "/jobs/daily-review",
+  "30 13 * * MON-SAT": "/jobs/daily-report",
 };
 
 async function runJob(env: Env, path: string): Promise<void> {

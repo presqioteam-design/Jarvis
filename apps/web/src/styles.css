@@ -52,9 +52,6 @@ button, input { font: inherit; }
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
 .kpi { display: flex; flex-direction: column; gap: 6px; }
 .kpi-value { font: 600 30px "Space Grotesk", sans-serif; }
-.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
-.nudge { background: #10202b; border-color: #1d4a63; }
-.nudge p { margin: 0 0 14px; }
 
 /* controls */
 .btn { min-height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--border-strong); background: transparent; color: var(--text); cursor: pointer; }
@@ -63,22 +60,10 @@ button, input { font: inherit; }
 .input { flex: 1; min-width: 0; height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border-strong); background: #0e141b; color: var(--text); }
 .pill { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: #3a2a0c; color: #fcd34d; }
 
-/* timeline */
-.timeline { display: flex; gap: 2px; height: 40px; border-radius: 8px; overflow: hidden; margin: 12px 0; background: #18202a; }
-.timeline > div { min-width: 2px; }
-.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: #c9d3de; }
-.legend span { display: flex; align-items: center; gap: 8px; }
-.legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
-
-/* bars and tasks */
-.bar { margin-bottom: 12px; font-size: 14px; }
-.track { height: 6px; border-radius: 3px; background: #232d3a; margin-top: 6px; }
-.track > div { height: 6px; border-radius: 3px; background: var(--accent); }
-.tasks { list-style: none; padding: 0; margin: 0 0 12px; }
-.tasks li { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--border); }
-.tasks label { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-.tasks input { width: 18px; height: 18px; accent-color: var(--accent); }
-.struck { text-decoration: line-through; color: var(--muted); }
+/* activity feed */
+.feed { list-style: none; padding: 0; margin: 0; }
+.feed li { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); }
+.feed li:last-child { border-bottom: 0; }
 
 /* chat */
 .chat { max-width: 760px; height: calc(100vh - 80px); display: flex; flex-direction: column; gap: 12px; }

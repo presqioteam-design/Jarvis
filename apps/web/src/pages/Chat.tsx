@@ -5,7 +5,7 @@ import type { ChatMessage } from "@jarvis/shared";
 import { db, userPath } from "../lib/firebase";
 import { sendChat } from "../lib/api";
 
-const SUGGESTIONS = ["What did I spend most of my time on today?", "Plan my afternoon", "Remind me to take a break at 4"];
+const SUGGESTIONS = ["What happened today?", "Who is interested?", "Which leads need my attention?"];
 
 export default function Chat({ user }: { user: User }) {
   const [messages, setMessages] = useState<(ChatMessage & { id: string })[]>([]);
@@ -44,7 +44,7 @@ export default function Chat({ user }: { user: User }) {
   return (
     <div className="chat">
       <div className="messages">
-        {messages.length === 0 && <p className="muted">Ask about your day, or ask Jarvis to add a task.</p>}
+        {messages.length === 0 && <p className="muted">Ask about your leads, replies and outreach.</p>}
         {messages.map((m) => (
           <div key={m.id} className={`msg ${m.role}`}>
             {m.text}

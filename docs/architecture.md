@@ -4,27 +4,34 @@
 
 | Component | Runs on | Job |
 |---|---|---|
-| `apps/agent` | Your PC | Reads ActivityWatch's local API every 5 minutes, tags each event with a category, and writes it to Firestore. |
-| `apps/api` | Render | The brain: builds daily summaries, answers chat, runs scheduled jobs, talks to the LLM and Telegram. |
-| `apps/web` | Cloudflare Pages | Dashboard. Signs in with Firebase Auth and reads Firestore with live listeners; calls the API only for chat. |
+| `apps/api` | Render | The brain: finds and enriches leads, sends and reads email, classifies replies, answers the admin, runs scheduled jobs. |
+| `apps/web` | Cloudflare Pages | Dashboard. Signs in with Firebase Auth and reads Firestore with live listeners; calls the API for chat and actions. |
 | `apps/cron` | Cloudflare Workers | Cron Triggers that POST to `/jobs/*` on the API. They also wake the free Render instance. |
 | Firestore | Firebase | Single source of truth. |
 
-## Request flows
+## Lead lifecycle
 
-**Activity sync.** ActivityWatch → agent (every 5 min) → `users/{uid}/events`.
+```
+new ─► ready ─► emailed ─► replied ─► interested ─► demo ─► customer
+ │                │           └──► not_interested / unsubscribed
+ └► no_contact    └──► bounced
+```
 
-**Hourly focus check.** Cron → `POST /jobs/focus-check` → API counts app switches in the last 30 min → if over the threshold, writes a nudge and sends a Telegram message.
+## Flows
 
-**Morning brief / evening review.** Cron → `POST /jobs/morning-brief` or `/jobs/daily-review` → API aggregates events and tasks → LLM writes the text → stored in `summaries/{date}` → sent to Telegram.
+**Find leads.** Admin creates a campaign (area + radius) → API searches TomTom (and OpenStreetMap) → crawls each hotel's website for emails and phones → saves `leads`. *(step 2)*
 
-**Chat (web).** Dashboard → `POST /chat` with a Firebase ID token → API verifies the token, loads today's summary as context, calls the LLM, stores both messages in `chats`.
+**Outreach.** Cron → `/jobs/send-emails` → sends today's quota of first emails and due follow-ups through Gmail SMTP → logs `messages` and `activity`. *(step 3)*
 
-**Chat (Telegram).** Telegram → `POST /telegram/webhook` (checked with a secret header and your chat ID) → same chat handler → reply via the Bot API.
+**Replies.** Cron → `/jobs/check-inbox` → reads Gmail over IMAP, matches replies by `In-Reply-To` → Gemini classifies them → updates the lead, alerts the admin on Telegram. *(step 4)*
+
+**Daily report.** Cron (19:00 IST, Mon–Sat) → `POST /jobs/daily-report` → counts today's `activity` → Telegram.
+
+**Chat.** Dashboard (`POST /chat` with a Firebase ID token) or Telegram (`/telegram/webhook`) → same handler → Gemini answers from pipeline counts, leads needing attention and the last 24 hours of activity.
 
 ## Security
 
-- Only the agent and API hold the Firebase service-account key. The browser uses Firebase Auth and the rules in `firebase/firestore.rules`.
+- Only the API holds the Firebase service-account key. The browser uses Firebase Auth and the rules in `firebase/firestore.rules`.
 - `/jobs/*` requires the `X-Cron-Secret` header.
 - `/chat` requires a Firebase ID token whose UID matches `JARVIS_UID`.
 - `/telegram/webhook` requires Telegram's secret-token header and only answers `TELEGRAM_CHAT_ID`.

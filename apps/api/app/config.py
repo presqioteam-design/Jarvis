@@ -16,17 +16,19 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     cron_secret: str = ""
 
-    llm_provider: str = "anthropic"
+    llm_provider: str = "gemini"
     llm_model: str = ""
     anthropic_api_key: str = ""
     gemini_api_key: str = ""
-    ollama_url: str = "http://localhost:11434"
+
+    tomtom_api_key: str = ""
+
+    email_address: str = ""
+    email_app_password: str = ""
 
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_webhook_secret: str = ""
-
-    focus_switch_threshold: int = 12
 
     @property
     def tz(self) -> ZoneInfo:

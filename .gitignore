@@ -23,3 +23,4 @@ apps/agent/state.json
 .DS_Store
 .vscode/
 .idea/
+*.tsbuildinfo

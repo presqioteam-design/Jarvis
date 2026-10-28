@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from "firebase/auth";
 import { auth, googleProvider } from "./lib/firebase";
-import Today from "./pages/Today";
+import Overview from "./pages/Overview";
 import Chat from "./pages/Chat";
 
-type Page = "today" | "chat";
+type Page = "overview" | "chat";
 
 export default function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
-  const [page, setPage] = useState<Page>("today");
+  const [page, setPage] = useState<Page>("overview");
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
 
@@ -20,7 +20,7 @@ export default function App() {
         <div className="card signin">
           <Logo />
           <h1>Jarvis</h1>
-          <p className="muted">Sign in to see your day.</p>
+          <p className="muted">Sign in to manage Presqio outreach.</p>
           <button className="btn primary" onClick={() => signInWithPopup(auth, googleProvider)}>
             Sign in with Google
           </button>
@@ -36,8 +36,8 @@ export default function App() {
           <Logo />
           <span>JARVIS</span>
         </div>
-        <button className={`navlink ${page === "today" ? "active" : ""}`} onClick={() => setPage("today")}>
-          Today
+        <button className={`navlink ${page === "overview" ? "active" : ""}`} onClick={() => setPage("overview")}>
+          Overview
         </button>
         <button className={`navlink ${page === "chat" ? "active" : ""}`} onClick={() => setPage("chat")}>
           Ask Jarvis
@@ -47,7 +47,7 @@ export default function App() {
         </button>
       </nav>
       <main className="main">
-        {page === "today" ? <Today user={user} onAsk={() => setPage("chat")} /> : <Chat user={user} />}
+        {page === "overview" ? <Overview user={user} onAsk={() => setPage("chat")} /> : <Chat user={user} />}
       </main>
     </div>
   );
