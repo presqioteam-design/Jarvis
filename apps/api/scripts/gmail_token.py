@@ -25,7 +25,10 @@ ENV = Path(__file__).resolve().parent.parent / ".env"
 
 
 def main(client_file: str) -> None:
-    conf = json.loads(Path(client_file).expanduser().read_text())
+    path = Path(client_file).expanduser()
+    if not path.exists() and path.with_name(path.name + ".json").exists():
+        path = path.with_name(path.name + ".json")   # Finder hides the .json ending
+    conf = json.loads(path.read_text())
     conf = conf.get("installed") or conf.get("web") or conf
     client_id, client_secret = conf["client_id"], conf["client_secret"]
 
