@@ -90,7 +90,7 @@ gh repo create presqio-jarvis --private --source . --push
    - `CORS_ORIGINS`: your Pages address from step 3, e.g. `https://presqio-jarvis.pages.dev` (fill it in after step 3)
 3. Deploy, then check `https://<your-service>.onrender.com/health` returns `{"ok":true}`.
 4. On startup the API registers the Telegram webhook itself (`TELEGRAM_MODE=webhook`). Message the bot `help` to check.
-5. Test sending with `send 1` in Telegram. If the Render logs show an SMTP connection error, Render is blocking email ports on the free plan; see "If email is blocked" below.
+5. Render's free plan blocks email ports, so set up the Gmail API (below) and add `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`. Then test with `send 1` in Telegram.
 
 > ⚠️ Don't run `yarn api:dev` on your computer while Render is live: local mode switches Telegram back to polling and disconnects the deployed bot. To go back to Render afterwards, restart the Render service so it re-registers the webhook.
 
@@ -113,8 +113,15 @@ npx wrangler deploy
 ### 5. Firestore rules
 Firebase console → Firestore → **Rules** → paste `firebase/firestore.rules` → **Publish**.
 
-### If email is blocked on Render
-Render may block outgoing SMTP on free instances. Options: run the backend on your own computer (`yarn api:dev`, with Cloudflare Tunnel for a public URL), or switch `apps/api/app/services/mailer.py` to the Gmail API, which sends over HTTPS.
+### Gmail API (email on Render)
+Render's free plan blocks SMTP, so the deployed API sends and reads mail through the Gmail API over HTTPS. Free; one-time setup:
+1. console.cloud.google.com → project **presqio-jarvis** → **APIs & Services → Library → Gmail API → Enable** (no billing needed).
+2. **OAuth consent screen**: External; app name "Jarvis"; your email as support and developer contact. Scopes: skip. **Test users**: add the outreach Gmail. Then **Publish app** ("In production"), otherwise Google expires the sign-in every 7 days.
+3. **Credentials → Create credentials → OAuth client ID → Desktop app** → Download JSON.
+4. `cd apps/api && .venv/bin/python -m scripts.gmail_token ~/Downloads/client_secret_XXXX.json` → sign in with the outreach Gmail → "Google hasn't verified this app" → **Advanced → Go to Jarvis (unsafe)** → Allow. It saves the three `GMAIL_*` values to `apps/api/.env`.
+5. Copy those three values into Render → Environment.
+
+Without the `GMAIL_*` values the API falls back to SMTP/IMAP with the App Password, which works on your own computer.
 
 ### Free-tier limits to keep in mind
 - Firestore Spark: 50k reads and 20k writes a day. A whole-city scan uses a lot of both; scan at most one city a day.

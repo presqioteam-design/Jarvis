@@ -24,7 +24,11 @@ class Settings(BaseSettings):
     tomtom_api_key: str = ""
 
     email_address: str = ""
-    email_app_password: str = ""
+    email_app_password: str = ""      # SMTP/IMAP; used when the Gmail API isn't set up
+    # Gmail API (HTTPS): needed where email ports are blocked, e.g. Render's free plan
+    gmail_client_id: str = ""
+    gmail_client_secret: str = ""
+    gmail_refresh_token: str = ""
     sender_name: str = "Presqio Team"
     daily_email_cap: int = 50        # hard limit per day, protects the Gmail account
 

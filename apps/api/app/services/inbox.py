@@ -19,7 +19,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from ..config import get_settings
 from ..firebase import col
 from ..timeutil import now_utc
-from . import activity, leads, llm, telegram
+from . import activity, gmail, leads, llm, telegram
 
 log = logging.getLogger(__name__)
 LOOKBACK_DAYS = 21
@@ -48,6 +48,25 @@ def _text_of(msg: email.message.Message) -> str:
     return re.sub(r"\s+\n", "\n", text).strip()[:3000]
 
 
+def _parse(raw: bytes) -> dict:
+    msg = email.message_from_bytes(raw)
+    return {
+        "messageId": (msg.get("Message-ID") or "").strip(),
+        "from": parseaddr(msg.get("From", ""))[1].lower(),
+        "subject": str(make_header(decode_header(msg.get("Subject", "")))),
+        "inReplyTo": (msg.get("In-Reply-To") or "").strip(),
+        "body": _text_of(msg),
+        "date": msg.get("Date", ""),
+    }
+
+
+async def fetch(since_days: int) -> list[dict]:
+    """Inbox messages via the Gmail API when set up (works on Render), else IMAP."""
+    if gmail.enabled():
+        return [_parse(raw) for raw in await gmail.recent_raw(since_days)]
+    return await asyncio.to_thread(_fetch, since_days)
+
+
 def _fetch(since_days: int) -> list[dict]:
     s = get_settings()
     since = (now_utc() - timedelta(days=since_days)).strftime("%d-%b-%Y")
@@ -59,15 +78,7 @@ def _fetch(since_days: int) -> list[dict]:
         out = []
         for num in data[0].split():
             _, parts = imap.fetch(num, "(BODY.PEEK[])")
-            msg = email.message_from_bytes(parts[0][1])
-            out.append({
-                "messageId": (msg.get("Message-ID") or "").strip(),
-                "from": parseaddr(msg.get("From", ""))[1].lower(),
-                "subject": str(make_header(decode_header(msg.get("Subject", "")))),
-                "inReplyTo": (msg.get("In-Reply-To") or "").strip(),
-                "body": _text_of(msg),
-                "date": msg.get("Date", ""),
-            })
+            out.append(_parse(parts[0][1]))
         return out
     finally:
         try:
@@ -84,7 +95,7 @@ async def check() -> int:
     if not contacted:
         return 0
     seen = {m.to_dict().get("messageId") for m in col("messages").where(filter=FieldFilter("direction", "==", "in")).stream()}
-    mails = await asyncio.to_thread(_fetch, LOOKBACK_DAYS)
+    mails = await fetch(LOOKBACK_DAYS)
 
     handled = []
     for m in mails:

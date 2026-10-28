@@ -36,7 +36,13 @@ services:
       # outreach Gmail
       - key: EMAIL_ADDRESS
         sync: false
-      - key: EMAIL_APP_PASSWORD
+      # Render's free plan blocks email ports, so send and read through the Gmail API (HTTPS).
+      # Get these with: cd apps/api && .venv/bin/python -m scripts.gmail_token client_secret.json
+      - key: GMAIL_CLIENT_ID
+        sync: false
+      - key: GMAIL_CLIENT_SECRET
+        sync: false
+      - key: GMAIL_REFRESH_TOKEN
         sync: false
       - key: SENDER_NAME
         value: Presqio Team

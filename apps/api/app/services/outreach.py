@@ -114,12 +114,13 @@ async def _send_all(targets: list[dict], step: int | None) -> tuple[list[dict], 
         n = lead.get("followUps", 0) + 1 if step is None else step
         email = templates.render(n, lead["name"], lead.get("area") or templates.area_from(lead.get("address", "")), get_settings().sender_name)
         try:
-            msg_id = await mailer.send(lead["to"], email.subject, email.body, lead.get("lastMessageId") if n else None)
+            msg_id, thread_id = await mailer.send(lead["to"], email.subject, email.body,
+                                                  lead.get("lastMessageId") if n else None, lead.get("threadId") if n else None)
         except Exception as e:
             log.exception("Send to %s failed", lead["to"])
             failed.append(f"{lead['name']} ({lead['to']}): {type(e).__name__}")
             continue
-        record(lead, n, email, msg_id)
+        record(lead, n, email, msg_id, thread_id)
         sent.append(lead)
         if i < len(targets) - 1:
             await asyncio.sleep(random.uniform(*PAUSE_SECONDS))
@@ -139,7 +140,7 @@ async def _report(sent: list[dict], failed: list[str], step: int | None) -> None
     await telegram.send("\n".join(lines))
 
 
-def record(lead: dict, n: int, email: templates.Email, msg_id: str) -> None:
+def record(lead: dict, n: int, email: templates.Email, msg_id: str, thread_id: str | None) -> None:
     now = now_utc()
     col("messages").add({
         "leadId": lead["id"], "direction": "out", "to": lead["to"], "subject": email.subject, "body": email.body,
@@ -147,7 +148,7 @@ def record(lead: dict, n: int, email: templates.Email, msg_id: str) -> None:
     })
     patch = {
         "status": "emailed", "followUps": n, "lastContactAt": now.isoformat(), "updatedAt": now.isoformat(),
-        "lastMessageId": msg_id, "emailedTo": lead["to"],
+        "lastMessageId": msg_id, "emailedTo": lead["to"], **({"threadId": thread_id} if thread_id else {}),
         "nextActionAt": (now + timedelta(days=FOLLOW_UP_GAP_DAYS[n])).isoformat() if n < len(FOLLOW_UP_GAP_DAYS) else None,
     }
     col("leads").document(lead["id"]).update(patch)
