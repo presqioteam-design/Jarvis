@@ -10,6 +10,8 @@ from .routers import campaigns, chat, jobs, telegram
 from .services import chat as chat_service, inbox, telegram as telegram_service
 
 logging.basicConfig(level=logging.INFO)
+# httpx logs full request URLs, and Telegram URLs contain the bot token
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 @asynccontextmanager

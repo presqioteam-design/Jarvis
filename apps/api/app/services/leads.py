@@ -336,6 +336,33 @@ def set_status(lead_ids: list[str], status: str) -> None:
     recompute_area_of(lead_ids)
 
 
+def find_area(name: str) -> dict | None:
+    """'hitech city' -> that area's summary (with city and key), matching loosely."""
+    want = slug(name.split(",")[0])
+    for d in col("cities").stream():
+        for key, a in (d.to_dict().get("areas") or {}).items():
+            if slug(a["area"]) == want:
+                return {**a, "key": key}
+    for d in col("cities").stream():   # second pass: partial match, e.g. "jubilee" for "Jubliee Hills"
+        for key, a in (d.to_dict().get("areas") or {}).items():
+            if want in slug(a["area"]) or slug(a["area"]) in want:
+                return {**a, "key": key}
+    return None
+
+
+def list_leads(area_key_: str | None, status: str, limit: int = 20) -> list[dict]:
+    """Up to `limit` leads with this status, those with an email first. Equality filters only."""
+    out: list[dict] = []
+    for has_email in (True, False):
+        q = col("leads").where(filter=FieldFilter("status", "==", status)).where(filter=FieldFilter("hasEmail", "==", has_email))
+        if area_key_:
+            q = q.where(filter=FieldFilter("areaKey", "==", area_key_))
+        out += [{"id": d.id, **d.to_dict()} for d in q.limit(limit - len(out)).stream()]
+        if len(out) >= limit:
+            break
+    return out
+
+
 def approve_all_with_email(city: str, area: str | None) -> int:
     q = (col("leads").where(filter=FieldFilter("city", "==", city))
          .where(filter=FieldFilter("status", "==", "new")).where(filter=FieldFilter("hasEmail", "==", True)))
