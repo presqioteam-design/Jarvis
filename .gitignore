@@ -1,0 +1,25 @@
+# secrets
+.env
+.env.*
+!.env.example
+service-account*.json
+.dev.vars
+
+# node
+node_modules/
+dist/
+.wrangler/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# agent local state
+apps/agent/state.json
+
+# os / editors
+.DS_Store
+.vscode/
+.idea/

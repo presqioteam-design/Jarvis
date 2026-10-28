@@ -1,0 +1,31 @@
+rules_version = '2';
+
+// The agent and API use the Admin SDK, which bypasses these rules.
+// These rules only govern the dashboard (signed-in browser).
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+
+      // Written by the agent / API only; read-only for the dashboard.
+      match /events/{id}    { allow read: if isOwner(uid); }
+      match /summaries/{id} { allow read: if isOwner(uid); }
+      match /chats/{id}     { allow read: if isOwner(uid); }
+
+      // Dashboard can dismiss nudges.
+      match /nudges/{id} {
+        allow read: if isOwner(uid);
+        allow update: if isOwner(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dismissed']);
+      }
+
+      // Dashboard owns tasks and settings.
+      match /tasks/{id}    { allow read, write: if isOwner(uid); }
+      match /settings/{id} { allow read, write: if isOwner(uid); }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+name = "jarvis-cron"
+main = "src/index.ts"
+compatibility_date = "2024-10-22"
+
+# Cron Triggers run in UTC. IST = UTC+5:30, weekdays only.
+#   02:30 UTC = 08:00 IST  → morning brief
+#   04:30–12:30 UTC hourly = 10:00–18:00 IST → focus check
+#   13:30 UTC = 19:00 IST  → daily review
+# Keep these strings identical to the JOBS map in src/index.ts.
+[triggers]
+crons = ["30 2 * * MON-FRI", "30 4-12 * * MON-FRI", "30 13 * * MON-FRI"]
+
+# Secrets (set with `wrangler secret put`): API_URL, CRON_SECRET
+# For local dev, put them in a .dev.vars file (gitignored).

@@ -1,0 +1,12 @@
+{
+  "name": "jarvis",
+  "private": true,
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev:web": "pnpm --filter web dev",
+    "build:web": "pnpm --filter web build",
+    "dev:cron": "pnpm --filter cron dev",
+    "deploy:cron": "pnpm --filter cron deploy",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
