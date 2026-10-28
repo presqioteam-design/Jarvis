@@ -36,10 +36,8 @@ Why hotels use it
 - Housekeeping, kitchen and front-desk staff use the phone they already have; no biometric machine to buy.
 - Attendance feeds straight into payroll, so no copying from paper registers at month end.
 
-Pricing (per month, excluding taxes)
-- Free: ₹0, 1 branch, up to 10 employees
-- Starter: ₹999, up to 3 branches, up to 50 employees
-- Growth: ₹2,999, up to 10 branches, up to 250 employees
+Pricing
+- Prices are not published yet. If asked about price, say: "Please call us on {PHONE} for pricing." Never quote a number.
 - Every account starts with a {TRIAL}.
 
 Links and contact

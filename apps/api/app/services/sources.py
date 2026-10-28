@@ -17,61 +17,65 @@ HOTEL_CATEGORY = "7314"  # TomTom "Hotel/Motel", includes guest houses and servi
 OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter"]
 
 
-async def geocode(area: str) -> dict:
-    """'Madhapur, Hyderabad' -> {label, lat, lon}. Raises ValueError if not found."""
+async def geocode(place: str) -> dict:
+    """'Hyderabad' or 'Madhapur, Hyderabad' -> {label, city, lat, lon, box}. Raises ValueError if not found."""
     async with httpx.AsyncClient(timeout=20) as client:
         r = await client.get(
-            f"{TOMTOM}/geocode/{area}.json",
+            f"{TOMTOM}/geocode/{place}.json",
             params={"key": get_settings().tomtom_api_key, "countrySet": "IN", "limit": 1},
         )
         r.raise_for_status()
         results = r.json().get("results", [])
     if not results:
-        raise ValueError(f"Couldn't find '{area}' on the map")
+        raise ValueError(f"Couldn't find '{place}' on the map")
     top = results[0]
-    return {"label": top["address"]["freeformAddress"], "lat": top["position"]["lat"], "lon": top["position"]["lon"]}
+    bb = top.get("boundingBox") or top["viewport"]
+    return {
+        "label": top["address"]["freeformAddress"],
+        "city": top["address"].get("municipality") or place.split(",")[-1].strip(),
+        "lat": top["position"]["lat"],
+        "lon": top["position"]["lon"],
+        "box": {"n": bb["topLeftPoint"]["lat"], "w": bb["topLeftPoint"]["lon"], "s": bb["btmRightPoint"]["lat"], "e": bb["btmRightPoint"]["lon"]},
+    }
 
 
-async def tomtom_hotels(lat: float, lon: float, radius_m: int) -> list[dict]:
-    out: list[dict] = []
-    async with httpx.AsyncClient(timeout=30) as client:
-        for offset in range(0, 500, 100):   # TomTom pages are 100 results max
-            r = await client.get(
-                f"{TOMTOM}/categorySearch/hotel.json",
-                params={
-                    "key": get_settings().tomtom_api_key, "lat": lat, "lon": lon, "radius": radius_m,
-                    "categorySet": HOTEL_CATEGORY, "countrySet": "IN", "limit": 100, "ofs": offset,
-                },
-            )
-            r.raise_for_status()
-            page = r.json().get("results", [])
-            for x in page:
-                poi = x.get("poi", {})
-                out.append({
-                    "id": f"tomtom_{x['id']}",
-                    "source": "tomtom",
-                    "name": poi.get("name", "").strip(),
-                    "address": x.get("address", {}).get("freeformAddress", ""),
-                    "lat": x["position"]["lat"],
-                    "lon": x["position"]["lon"],
-                    "phone": clean_phone(poi.get("phone", "")),
-                    "website": clean_url(poi.get("url", "")),
-                    "emails": [],
-                })
-            if len(page) < 100:
-                break
+async def tomtom_box(client: httpx.AsyncClient, box: dict) -> list[dict]:
+    """Hotels inside one box. TomTom caps a search at 100 results, so a full page means: split the box."""
+    r = await client.get(
+        f"{TOMTOM}/categorySearch/hotel.json",
+        params={
+            "key": get_settings().tomtom_api_key, "categorySet": HOTEL_CATEGORY, "countrySet": "IN", "limit": 100,
+            "topLeft": f"{box['n']},{box['w']}", "btmRight": f"{box['s']},{box['e']}",
+        },
+    )
+    r.raise_for_status()
+    out = []
+    for x in r.json().get("results", []):
+        poi, addr = x.get("poi", {}), x.get("address", {})
+        out.append({
+            "id": f"tomtom_{x['id']}",
+            "source": "tomtom",
+            "name": poi.get("name", "").strip(),
+            "address": addr.get("freeformAddress", ""),
+            "area": addr.get("municipalitySubdivision") or addr.get("municipalitySecondarySubdivision") or addr.get("municipality") or "",
+            "lat": x["position"]["lat"],
+            "lon": x["position"]["lon"],
+            "phone": clean_phone(poi.get("phone", "")),
+            "website": clean_url(poi.get("url", "")),
+            "emails": [],
+        })
     return out
 
 
-async def osm_hotels(lat: float, lon: float, radius_m: int) -> list[dict]:
+async def osm_hotels(box: dict) -> list[dict]:
     """OpenStreetMap via Overpass. Slow and often busy, so failures return []."""
     query = (
-        f'[out:json][timeout:50];nwr["tourism"~"^(hotel|guest_house|motel|hostel)$"]'
-        f"(around:{radius_m},{lat},{lon});out center tags;"
+        f'[out:json][timeout:90];nwr["tourism"~"^(hotel|guest_house|motel|hostel)$"]'
+        f"({box['s']},{box['w']},{box['n']},{box['e']});out center tags;"
     )
     for url in OVERPASS:
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
+            async with httpx.AsyncClient(timeout=100) as client:
                 r = await client.post(url, data={"data": query}, headers={"User-Agent": "presqio-jarvis/0.1"})
                 r.raise_for_status()
                 elements = r.json()["elements"]
@@ -95,6 +99,7 @@ async def osm_hotels(lat: float, lon: float, radius_m: int) -> list[dict]:
             "source": "osm",
             "name": name,
             "address": address,
+            "area": tags.get("addr:suburb", ""),
             "lat": pos["lat"],
             "lon": pos["lon"],
             "phone": clean_phone(tags.get("phone") or tags.get("contact:phone") or ""),

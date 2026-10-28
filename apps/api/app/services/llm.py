@@ -17,7 +17,8 @@ DEFAULT_MODELS = {
 Message = dict  # {"role": "user" | "assistant", "content": str}
 
 
-async def complete(system: str, messages: list[Message], max_tokens: int = 800) -> str:
+async def complete(system: str, messages: list[Message], max_tokens: int = 800, json: bool = False) -> str:
+    """json=True asks the model for a JSON object (Gemini enforces it; Claude follows the prompt)."""
     s = get_settings()
     provider = s.llm_provider.lower()
     model = s.llm_model or DEFAULT_MODELS.get(provider, "")
@@ -48,7 +49,7 @@ async def complete(system: str, messages: list[Message], max_tokens: int = 800) 
                             {"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]}
                             for m in messages
                         ],
-                        "generationConfig": {"maxOutputTokens": max_tokens},
+                        "generationConfig": {"maxOutputTokens": max_tokens, **({"responseMimeType": "application/json"} if json else {})},
                     },
                 )
                 if r.status_code not in (429, 503) or attempt == 2:

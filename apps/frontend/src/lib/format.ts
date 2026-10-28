@@ -23,3 +23,10 @@ export function hostname(url: string): string {
     return url;
   }
 }
+
+/** Same rule as slug() in apps/api/app/services/leads.py: "Hitech City" -> "hitech-city" */
+export function slug(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "other";
+}
+
+export const areaKey = (city: string, area: string) => `${slug(city)}--${slug(area)}`;

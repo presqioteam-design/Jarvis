@@ -6,15 +6,40 @@
 
 export type Language = "en" | "hi" | "te";
 
-/** users/{uid}/campaigns/{id} — one area search, e.g. "Hotels in Madhapur" */
+/** users/{uid}/campaigns/{id} — one scan: a whole city, or a square around a spot */
 export interface Campaign {
   name: string;
-  area: { label: string; lat: number; lon: number; radiusM: number };
+  kind?: "city" | "area";
+  city?: string;                 // set once the place is found on the map
+  area: { label: string; lat: number; lon: number; radiusM: number };   // radiusM 0 = whole city
   query: string;                 // what to search for, e.g. "hotel"
   status: "searching" | "ready" | "failed" | "active" | "paused" | "done";
   error?: string;                // set when status is "failed"
   createdAt: string;
   stats: { found: number; withEmail: number; withPhone: number; emailed: number; replied: number; interested: number };
+  scan?: { phase: "map" | "osm" | "websites" | "done"; squaresDone: number; found: number; queue: unknown[] };
+}
+
+/** One area's totals, stored inside its city's summary */
+export interface AreaSummary {
+  city: string;
+  area: string;
+  total: number;
+  withEmail: number;
+  withPhone: number;
+  statuses: Partial<Record<LeadStatus, number>>;
+}
+
+/** users/{uid}/cities/{city-slug} — totals per city and per area, kept by the API.
+ *  Pages read this one doc instead of thousands of leads (free Firestore: 50k reads a day). */
+export interface CitySummary {
+  city: string;
+  total: number;
+  withEmail: number;
+  withPhone: number;
+  statuses: Partial<Record<LeadStatus, number>>;
+  areas: Record<string, AreaSummary>;   // keyed by areaKey, e.g. "hyderabad--madhapur"
+  updatedAt: string;
 }
 
 export type LeadStatus =
@@ -35,6 +60,9 @@ export interface Lead {
   campaignId: string;
   name: string;
   address: string;
+  city?: string;
+  area?: string;                 // locality, e.g. "Madhapur"
+  areaKey?: string;              // "hyderabad--madhapur"
   lat: number;
   lon: number;
   phone?: string;
@@ -43,7 +71,10 @@ export interface Lead {
   source: "tomtom" | "osm" | "manual";
   status: LeadStatus;
   language?: Language;           // preferred language once known
-  followUps: number;             // follow-up emails sent after the first one
+  crawled?: boolean;             // website already read for contacts
+  followUps: number;             // emails sent so far in the sequence (0 = first)
+  emailedTo?: string;            // the address the sequence goes to
+  lastMessageId?: string;        // for threading follow-ups
   nextActionAt?: string;         // ISO; when Jarvis should do the next step
   lastContactAt?: string;
   notes?: string;

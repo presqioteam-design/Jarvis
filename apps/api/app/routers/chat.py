@@ -17,4 +17,5 @@ class ChatOut(BaseModel):
 
 @router.post("", response_model=ChatOut)
 async def post_chat(body: ChatIn, _uid: str = Depends(require_user)) -> ChatOut:
-    return ChatOut(reply=await chat.handle(body.message, channel="web"))
+    reply, _ = await chat.handle(body.message, channel="web")
+    return ChatOut(reply=reply)

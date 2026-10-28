@@ -25,10 +25,14 @@ class Settings(BaseSettings):
 
     email_address: str = ""
     email_app_password: str = ""
+    sender_name: str = "Presqio Team"
+    daily_email_cap: int = 50        # hard limit per day, protects the Gmail account
+
 
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_webhook_secret: str = ""
+    telegram_mode: str = "polling"   # "polling" for local dev, "webhook" when deployed
 
     @property
     def tz(self) -> ZoneInfo:

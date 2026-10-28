@@ -1,14 +1,30 @@
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .routers import campaigns, chat, jobs, telegram
+from .services import chat as chat_service, inbox, telegram as telegram_service
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="Jarvis API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # locally there's no public URL for a webhook, so listen to Telegram by polling
+    tasks = [asyncio.create_task(inbox.watch())]
+    if get_settings().telegram_mode == "polling" and telegram_service.enabled():
+        tasks.append(asyncio.create_task(telegram_service.poll(chat_service.on_telegram)))
+        logging.info("Listening for Telegram messages (polling)")
+    yield
+    for t in tasks:
+        t.cancel()
+
+
+app = FastAPI(title="Jarvis API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

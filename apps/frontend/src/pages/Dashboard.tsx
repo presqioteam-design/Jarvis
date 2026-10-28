@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { collection, limit, onSnapshot, orderBy, query, type FirestoreError } from "firebase/firestore";
-import type { Activity, Lead, LeadStatus } from "@jarvis/shared";
+import { collection, limit, onSnapshot, orderBy, query, where, type FirestoreError } from "firebase/firestore";
+import type { Activity, CitySummary, Lead, LeadStatus } from "@jarvis/shared";
 import { db, userPath } from "../lib/firebase";
 import { useUser } from "../lib/auth";
 import { greeting, percent, timeAgo } from "../lib/format";
@@ -34,7 +34,8 @@ const STATUS_LABEL: Partial<Record<LeadStatus, string>> = {
 
 export default function Dashboard() {
   const user = useUser()!;
-  const [leads, setLeads] = useState<WithId<Lead>[]>([]);
+  const [cities, setCities] = useState<CitySummary[]>([]);
+  const [attention, setAttention] = useState<WithId<Lead>[]>([]);
   const [feed, setFeed] = useState<WithId<Activity>[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
@@ -47,12 +48,18 @@ export default function Dashboard() {
           : `Couldn't load data (${e.code}).`,
       );
     const unsubs = [
+      // city totals instead of every lead: thousands of leads would use up the free Firestore reads
       onSnapshot(
-        collection(db, userPath(user.uid, "leads")),
+        collection(db, userPath(user.uid, "cities")),
         (s) => {
-          setLeads(s.docs.map((d) => ({ id: d.id, ...(d.data() as Lead) })));
+          setCities(s.docs.map((d) => d.data() as CitySummary));
           setLoaded(true);
         },
+        onError,
+      ),
+      onSnapshot(
+        query(collection(db, userPath(user.uid, "leads")), where("status", "in", ["replied", "interested", "demo"]), limit(30)),
+        (s) => setAttention(s.docs.map((d) => ({ id: d.id, ...(d.data() as Lead) })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 6)),
         onError,
       ),
       onSnapshot(
@@ -64,14 +71,11 @@ export default function Dashboard() {
     return () => unsubs.forEach((u) => u());
   }, [user.uid]);
 
-  const count = (statuses: LeadStatus[]) => leads.filter((l) => statuses.includes(l.status)).length;
+  const total = cities.reduce((n, c) => n + c.total, 0);
+  const count = (statuses: LeadStatus[]) => cities.reduce((n, c) => n + statuses.reduce((m, s) => m + (c.statuses[s] ?? 0), 0), 0);
   const counts = Object.fromEntries(STAGES.map((s) => [s.key, count(s.statuses)]));
   const contacted = counts.emailed + counts.replied + counts.interested + counts.customer;
   const responded = counts.replied + counts.interested + counts.customer;
-  const attention = leads
-    .filter((l) => l.status in STATUS_LABEL)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .slice(0, 6);
 
   return (
     <div className="page">
@@ -101,8 +105,8 @@ export default function Dashboard() {
       )}
 
       <section className="kpis" aria-label="Pipeline totals">
-        <Kpi icon="leads" label="Leads found" value={leads.length} note={leads.length ? `${counts.found} not contacted yet` : "Start a campaign"} />
-        <Kpi icon="mail" label="Contacted" value={contacted} note={`${percent(contacted, leads.length)} of leads`} />
+        <Kpi icon="leads" label="Hotels found" value={total} note={total ? `${counts.found.toLocaleString()} not contacted yet` : "Scan your city"} />
+        <Kpi icon="mail" label="Contacted" value={contacted} note={`${percent(contacted, total)} of leads`} />
         <Kpi icon="reply" label="Replies" value={responded} note={`${percent(responded, contacted)} reply rate`} />
         <Kpi icon="star" label="Interested" value={counts.interested + counts.customer} note={`${counts.customer} customers`} accent />
       </section>
@@ -110,10 +114,10 @@ export default function Dashboard() {
       <section className="card">
         <div className="card-head">
           <h2>Pipeline</h2>
-          <span className="muted small">{leads.length} hotels</span>
+          <span className="muted small">{total.toLocaleString()} hotels</span>
         </div>
         <div className="funnel" role="img" aria-label="Leads by stage">
-          {leads.length === 0 ? (
+          {total === 0 ? (
             <div className="funnel-empty" />
           ) : (
             STAGES.filter((s) => counts[s.key] > 0).map((s) => (
@@ -132,7 +136,7 @@ export default function Dashboard() {
         </div>
       </section>
 
-      {loaded && leads.length === 0 && !error ? (
+      {loaded && total === 0 && !error ? (
         <GettingStarted />
       ) : (
         <div className="grid2">
@@ -188,7 +192,7 @@ function Kpi({ icon, label, value, note, accent }: { icon: IconName; label: stri
         <span className="muted">{label}</span>
         <span className="kpi-icon"><Icon name={icon} size={18} /></span>
       </div>
-      <span className="kpi-value">{value}</span>
+      <span className="kpi-value">{value.toLocaleString()}</span>
       <span className="muted small">{note}</span>
     </div>
   );

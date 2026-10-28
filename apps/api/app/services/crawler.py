@@ -17,17 +17,26 @@ LINK_RE = re.compile(r'href=["\']([^"\'#]+)', re.I)
 CONTACT_WORDS = ("contact", "about", "reach", "enquiry", "inquiry", "booking")
 
 # addresses that show up on websites but aren't the hotel's
-JUNK_DOMAINS = ("example.com", "sentry.io", "wixpress.com", "domain.com", "email.com", "yourdomain", "godaddy.com", "w3.org")
+JUNK_DOMAINS = ("example.com", "sentry.io", "wixpress.com", "domain.com", "email.com", "yourdomain", "godaddy.com", "w3.org", "company.com", "mysite.com", "website.com")
+# mailboxes that reach the web designer or a robot, not the hotel
+JUNK_NAMES = ("you@", "your@", "name@", "yourname@", "user@", "webmaster@", "noreply@", "no-reply@", "donotreply@", "privacy@", "abuse@", "wordpress@")
 JUNK_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".css", ".js")
 # chains and booking sites: their emails reach head office, not the hotel owner
 AGGREGATORS = (
     "oyorooms.com", "oyohotels.com", "fabhotels.com", "treebo", "staybloom.com", "zostel.com", "goibibo.com",
     "makemytrip.com", "booking.com", "agoda.com", "airbnb.", "expedia.", "tripadvisor.", "trivago.", "cleartrip.com",
+    "weddingz.in", "stanzaliving.com", "justdial.com", "sulekha.com",
 )
 
 
 def is_aggregator(url_or_email: str) -> bool:
     return any(a in url_or_email.lower() for a in AGGREGATORS)
+
+
+def usable(email: str) -> bool:
+    """False for image names, placeholders, robot mailboxes and chain/booking-site addresses."""
+    e = email.lower()
+    return not (e.endswith(JUNK_SUFFIXES) or any(d in e for d in JUNK_DOMAINS) or e.startswith(JUNK_NAMES) or is_aggregator(e))
 
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PresqioJarvis/0.1; +https://presqio.pages.dev)"}
@@ -38,7 +47,7 @@ def extract_emails(html: str) -> list[str]:
     html = re.sub(r"\\?u003[ce]", " ", html, flags=re.I)   # JSON-escaped < and > glue onto addresses
     for e in EMAIL_RE.findall(html):
         e = e.lower().strip(".")
-        if e.endswith(JUNK_SUFFIXES) or any(d in e for d in JUNK_DOMAINS) or is_aggregator(e) or e in found:
+        if not usable(e) or e in found:
             continue
         found.append(e)
     return found
@@ -81,7 +90,7 @@ async def crawl(client: httpx.AsyncClient, website: str) -> dict:
     return {"emails": emails[:3], "phone": phone}
 
 
-async def crawl_many(websites: list[str], concurrency: int = 6) -> dict[str, dict]:
+async def crawl_many(websites: list[str], concurrency: int = 10) -> dict[str, dict]:
     sem = asyncio.Semaphore(concurrency)
     async with httpx.AsyncClient(timeout=12, follow_redirects=True, headers=HEADERS) as client:
         async def one(site: str):
