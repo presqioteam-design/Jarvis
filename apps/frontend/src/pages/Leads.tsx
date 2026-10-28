@@ -1,22 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { collection, doc, limit, onSnapshot, query, where, type QueryConstraint } from "firebase/firestore";
+import {
+  collection, doc, getDocs, limit, onSnapshot, query, startAfter, where, type QueryDocumentSnapshot,
+} from "firebase/firestore";
 import type { AreaSummary, Campaign, CitySummary, Lead, LeadStatus } from "@jarvis/shared";
 import { db, userPath } from "../lib/firebase";
-import { blockLead, setLeadStatus } from "../lib/api";
+import { approveAllWithEmail, blockLead, setLeadStatus } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { areaKey, hostname, slug } from "../lib/format";
 import Icon from "../components/Icon";
 
 type Row = Lead & { id: string };
 
-const TABS: { key: string; label: string; statuses?: LeadStatus[] }[] = [
+const ALL: LeadStatus[] = ["new", "ready", "emailed", "replied", "interested", "demo", "customer", "no_contact", "not_interested", "unsubscribed", "bounced"];
+const TABS: { key: string; label: string; statuses: LeadStatus[] }[] = [
   { key: "review", label: "To review", statuses: ["new"] },
   { key: "ready", label: "Approved", statuses: ["ready"] },
   { key: "contacted", label: "Contacted", statuses: ["emailed", "replied", "interested", "demo", "customer"] },
   { key: "none", label: "No contact", statuses: ["no_contact"] },
   { key: "blocked", label: "Blocked", statuses: ["unsubscribed", "not_interested", "bounced"] },
-  { key: "all", label: "All" },
+  { key: "all", label: "All", statuses: ALL },
 ];
 
 const STATUS_TEXT: Record<LeadStatus, string> = {
@@ -25,68 +28,127 @@ const STATUS_TEXT: Record<LeadStatus, string> = {
   unsubscribed: "Blocked", bounced: "Bounced",
 };
 
-const PAGE = 300;   // without an area picked, show at most this many leads per tab
+const PAGE_SIZE = 20;
+
+/**
+ * Pages are fetched with equality filters only (status, hasEmail, area), one
+ * "phase" at a time: every status of the tab, hotels with email before those
+ * without. Equality-only queries need no composite index in Firestore.
+ */
+type Phase = { status: LeadStatus; hasEmail: boolean };
+type Cursor = { phase: number; last: QueryDocumentSnapshot | null; done: boolean };
 
 export default function Leads() {
   const user = useUser()!;
   const [params, setParams] = useSearchParams();
   const [cities, setCities] = useState<string[]>([]);
-  const [areas, setAreas] = useState<AreaSummary[]>([]);
-  const [leads, setLeads] = useState<Row[]>([]);
+  const [summary, setSummary] = useState<CitySummary | null>(null);
+  const [rows, setRows] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [working, setWorking] = useState(false);
-  const tab = params.get("tab") ?? "review";
+  const cursor = useRef<Cursor>({ phase: 0, last: null, done: false });
+  const generation = useRef(0);   // ignores pages that arrive after the filters changed
+  const listRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  const tab = TABS.find((t) => t.key === (params.get("tab") ?? "review")) ?? TABS[0];
   const city = params.get("city") ?? cities[0] ?? "";
   const area = params.get("area") ?? "";
-  const statuses = TABS.find((t) => t.key === tab)?.statuses;
+  const areas: AreaSummary[] = useMemo(
+    () => Object.values(summary?.areas ?? {}).sort((a, b) => a.area.localeCompare(b.area)),
+    [summary],
+  );
+  const phases: Phase[] = useMemo(() => [true, false].flatMap((hasEmail) => tab.statuses.map((status) => ({ status, hasEmail }))), [tab]);
 
-  const onError = () => setError("Couldn't load leads. Check that the Firestore rules are published.");
+  const onError = useCallback((e: { code?: string }) => {
+    setError(e.code === "resource-exhausted"
+      ? "Firestore's free daily reads are used up. They reset at 12:30 PM IST."
+      : e.code === "failed-precondition"
+        ? "This filter needs a Firestore index. Tell Jarvis's developer which tab and area you picked."
+        : "Couldn't load leads. Check that the Firestore rules are published.");
+  }, []);
 
-  // cities come from finished scans
   useEffect(
-    () =>
-      onSnapshot(collection(db, userPath(user.uid, "campaigns")), (s) => {
-        const names = s.docs.map((d) => (d.data() as Campaign).city).filter((c): c is string => !!c);
-        setCities([...new Set(names)].sort());
-      }, onError),
-    [user.uid],
+    () => onSnapshot(collection(db, userPath(user.uid, "campaigns")), (s) => {
+      const names = s.docs.map((d) => (d.data() as Campaign).city).filter((c): c is string => !!c);
+      setCities([...new Set(names)].sort());
+    }, onError),
+    [user.uid, onError],
   );
 
   useEffect(() => {
     if (!city) return;
-    return onSnapshot(doc(db, userPath(user.uid, "cities", slug(city))), (s) =>
-      setAreas(Object.values((s.data() as CitySummary | undefined)?.areas ?? {}).sort((a, b) => a.area.localeCompare(b.area))), onError);
-  }, [user.uid, city]);
+    return onSnapshot(doc(db, userPath(user.uid, "cities", slug(city))), (s) => setSummary(s.exists() ? (s.data() as CitySummary) : null), onError);
+  }, [user.uid, city, onError]);
 
-  // one area: every lead in it. No area: one status tab, capped.
-  useEffect(() => {
-    if (!area && !statuses) {
-      setLeads([]);
-      return;
+  const loadMore = useCallback(async () => {
+    const c = cursor.current;
+    if (loading || c.done || !city) return;
+    const gen = generation.current;
+    setLoading(true);
+    try {
+      const page: Row[] = [];
+      while (page.length < PAGE_SIZE && c.phase < phases.length) {
+        const p = phases[c.phase];
+        const wanted = PAGE_SIZE - page.length;
+        const snap = await getDocs(query(
+          collection(db, userPath(user.uid, "leads")),
+          where("city", "==", city),
+          where("status", "==", p.status),
+          where("hasEmail", "==", p.hasEmail),
+          ...(area ? [where("areaKey", "==", areaKey(city, area))] : []),
+          ...(c.last ? [startAfter(c.last)] : []),
+          limit(wanted),
+        ));
+        if (gen !== generation.current) return;
+        page.push(...snap.docs.map((d) => ({ id: d.id, ...(d.data() as Lead) })));
+        if (snap.docs.length < wanted) {
+          c.phase += 1;   // this phase is used up; continue with the next
+          c.last = null;
+        } else {
+          c.last = snap.docs[snap.docs.length - 1];
+        }
+      }
+      c.done = c.phase >= phases.length;
+      setRows((r) => [...r, ...page]);
+    } catch (e) {
+      onError(e as { code?: string });
+      c.done = true;
+    } finally {
+      if (gen === generation.current) setLoading(false);
     }
-    const constraints: QueryConstraint[] = area
-      ? [where("areaKey", "==", areaKey(city, area))]
-      : [where("status", "in", statuses!), limit(PAGE)];
-    return onSnapshot(query(collection(db, userPath(user.uid, "leads")), ...constraints),
-      (s) => setLeads(s.docs.map((d) => ({ id: d.id, ...(d.data() as Lead) }))), onError);
-    // statuses is derived from tab
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user.uid, city, area, area ? "" : tab]);
+  }, [loading, city, area, phases, user.uid, onError]);
 
-  // tab counts come from the area totals, so they cover every lead, not just the loaded ones
-  const counted = area ? areas.filter((a) => a.area === area) : areas;
-  const tabCount = (st?: LeadStatus[]) =>
-    counted.reduce((n, a) => n + (st ? st.reduce((m, s) => m + (a.statuses[s] ?? 0), 0) : a.total), 0);
+  // new filters: start again from the first page
+  useEffect(() => {
+    generation.current += 1;
+    cursor.current = { phase: 0, last: null, done: false };
+    setRows([]);
+    setLoading(false);
+    setError("");
+    listRef.current?.scrollTo({ top: 0 });
+  }, [city, area, tab.key]);
 
-  const rows = useMemo(() => {
+  // fetch the next page whenever the bottom of the list scrolls into view
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => entries[0].isIntersecting && loadMore(), { root: listRef.current, rootMargin: "200px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [loadMore, rows.length]);
+
+  const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return leads
-      .filter((l) => !statuses || statuses.includes(l.status))
-      .filter((l) => area || !city || !l.city || l.city === city)
-      .filter((l) => !q || `${l.name} ${l.address} ${l.area ?? ""} ${l.emails.join(" ")} ${l.phone ?? ""}`.toLowerCase().includes(q))
-      .sort((a, b) => Number(!!b.emails.length) - Number(!!a.emails.length) || Number(!!b.phone) - Number(!!a.phone) || a.name.localeCompare(b.name));
-  }, [leads, statuses, search, area, city]);
+    return q ? rows.filter((l) => `${l.name} ${l.address} ${l.area ?? ""} ${l.emails.join(" ")} ${l.phone ?? ""}`.toLowerCase().includes(q)) : rows;
+  }, [rows, search]);
+
+  // counts come from the city summary, so they cover every lead, not just loaded ones
+  const counted = area ? areas.filter((a) => a.area === area) : areas;
+  const tabCount = (st: LeadStatus[]) => counted.reduce((n, a) => n + st.reduce((m, s) => m + (a.statuses[s] ?? 0), 0), 0);
+  const reviewWithEmail = rows.filter((l) => l.status === "new" && l.emails.length).length;
 
   const setParam = (updates: Record<string, string>) => {
     const next = new URLSearchParams(params);
@@ -94,13 +156,34 @@ export default function Leads() {
     setParams(next, { replace: true });
   };
 
+  /** Update loaded rows in place; drop the ones that no longer belong in this tab. */
+  const applyLocal = (ids: string[], status: LeadStatus) =>
+    setRows((r) => r.map((l) => (ids.includes(l.id) ? { ...l, status } : l)).filter((l) => tab.statuses.includes(l.status)));
+
   async function changeStatus(ids: string[], status: "new" | "ready") {
     setWorking(true);
     setError("");
     try {
-      for (let i = 0; i < ids.length; i += 500) await setLeadStatus(ids.slice(i, i + 500), status);
+      await setLeadStatus(ids, status);
+      applyLocal(ids, status);
     } catch {
       setError("Couldn't update. Make sure the API is running (yarn api:dev).");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function approveAll() {
+    const where = area ? ` in ${area}` : ` in ${city}`;
+    if (!confirm(`Approve every hotel with an email${where} that's waiting for review?`)) return;
+    setWorking(true);
+    setError("");
+    try {
+      const { approved } = await approveAllWithEmail(city, area || null);
+      setRows((r) => r.filter((l) => !(l.status === "new" && l.emails.length)));
+      alert(`Approved ${approved} hotels${where}.`);
+    } catch {
+      setError("Couldn't approve. Make sure the API is running (yarn api:dev).");
     } finally {
       setWorking(false);
     }
@@ -110,24 +193,23 @@ export default function Leads() {
     if (!confirm(`Never contact ${l.name}? Its email and phone go on the do-not-contact list.`)) return;
     try {
       await blockLead(l.id);
+      applyLocal([l.id], "unsubscribed");
     } catch {
       setError("Couldn't block this lead. Make sure the API is running (yarn api:dev).");
     }
   }
 
-  const approvable = rows.filter((l) => l.status === "new" && l.emails.length).map((l) => l.id);
-
   return (
-    <div className="page wide">
+    <div className="page wide leads-page">
       <header className="page-head">
         <div>
           <h1 className="title">Leads</h1>
           <p className="muted sub">Approved hotels are emailed first when you tell Jarvis to send. Blocked hotels are never contacted.</p>
         </div>
-        {tab === "review" && approvable.length > 0 && (
-          <button className="btn primary" onClick={() => changeStatus(approvable, "ready")} disabled={working}>
+        {tab.key === "review" && reviewWithEmail > 0 && (
+          <button className="btn primary" onClick={approveAll} disabled={working}>
             <Icon name="check" size={18} />
-            Approve {approvable.length} with email{area ? ` in ${area}` : ""}
+            Approve all with email{area ? ` in ${area}` : ""}
           </button>
         )}
       </header>
@@ -141,36 +223,31 @@ export default function Leads() {
           {cities.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
         <label className="sr-only" htmlFor="lead-area">Area</label>
-        <select id="lead-area" className="input" value={area} onChange={(e) => setParam({ area: e.target.value })}>
-          <option value="">All areas</option>
+        <select id="lead-area" className="input" value={area} onChange={(e) => setParam({ area: e.target.value })} disabled={areas.length === 0}>
+          <option value="">{areas.length ? `All areas (${areas.length})` : "Areas not ready yet"}</option>
           {areas.map((a) => (
-            <option key={a.area} value={a.area}>{a.area} ({a.total})</option>
+            <option key={a.area} value={a.area}>{a.area} · {a.total} hotels{a.withEmail ? ` · ${a.withEmail} email` : ""}</option>
           ))}
         </select>
-        <label className="sr-only" htmlFor="lead-search">Search leads</label>
-        <input id="lead-search" className="input" placeholder="Search name, email, phone…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <label className="sr-only" htmlFor="lead-search">Search loaded leads</label>
+        <input id="lead-search" className="input" placeholder="Search loaded leads…" value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
 
       <div className="tabs" role="tablist">
         {TABS.map((t) => (
-          <button key={t.key} role="tab" aria-selected={tab === t.key} className={`tab ${tab === t.key ? "active" : ""}`} onClick={() => setParam({ tab: t.key === "review" ? "" : t.key })}>
+          <button key={t.key} role="tab" aria-selected={tab.key === t.key} className={`tab ${tab.key === t.key ? "active" : ""}`} onClick={() => setParam({ tab: t.key === "review" ? "" : t.key })}>
             {t.label} <span className="count">{tabCount(t.statuses).toLocaleString()}</span>
           </button>
         ))}
       </div>
 
       <section className="card table-card">
-        {!area && !statuses ? (
-          <p className="empty">Pick an area to see all of its hotels.</p>
-        ) : rows.length === 0 ? (
-          <p className="empty">Nothing here.</p>
-        ) : (
-          <>
-            {!area && leads.length >= PAGE && (
-              <p className="muted small list-note">Showing the first {PAGE}. Pick an area to see everything in it.</p>
-            )}
+        <div className="lead-scroll" ref={listRef}>
+          {shown.length === 0 && !loading && cursor.current.done ? (
+            <p className="empty">{search ? "No loaded leads match. Scroll to load more, or clear the search." : "Nothing here."}</p>
+          ) : (
             <ul className="leads">
-              {rows.map((l) => (
+              {shown.map((l) => (
                 <li key={l.id} className="lead">
                   <div className="lead-main">
                     <div className="list-title">{l.name}</div>
@@ -194,8 +271,11 @@ export default function Leads() {
                 </li>
               ))}
             </ul>
-          </>
-        )}
+          )}
+          <div ref={sentinelRef} className="list-end muted small" aria-live="polite">
+            {loading ? <><span className="spinner" /> Loading more…</> : cursor.current.done && rows.length > 0 ? `All ${rows.length} loaded` : ""}
+          </div>
+        </div>
       </section>
     </div>
   );

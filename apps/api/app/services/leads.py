@@ -336,6 +336,24 @@ def set_status(lead_ids: list[str], status: str) -> None:
     recompute_area_of(lead_ids)
 
 
+def approve_all_with_email(city: str, area: str | None) -> int:
+    q = (col("leads").where(filter=FieldFilter("city", "==", city))
+         .where(filter=FieldFilter("status", "==", "new")).where(filter=FieldFilter("hasEmail", "==", True)))
+    if area:
+        q = q.where(filter=FieldFilter("areaKey", "==", area_key(city, area)))
+    refs = [d.reference for d in q.select(["areaKey"]).stream()]
+    now = now_utc().isoformat()
+    for i in range(0, len(refs), 400):
+        batch = db().batch()
+        for r in refs[i:i + 400]:
+            batch.update(r, {"status": "ready", "updatedAt": now})
+        batch.commit()
+    if refs:
+        recompute_area_of([r.id for r in refs])
+        activity.log("status_change", f"Approved {len(refs)} hotels with email in {area or city}.")
+    return len(refs)
+
+
 def block(lead_id: str) -> None:
     """Never contact this hotel again (adds its email and phone to the do-not-contact list)."""
     ref = col("leads").document(lead_id)

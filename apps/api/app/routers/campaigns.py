@@ -41,6 +41,17 @@ async def set_status(body: StatusIn):
     return {"ok": True}
 
 
+class ApproveAllIn(BaseModel):
+    city: str
+    area: str | None = None
+
+
+@router.post("/leads/approve-all")
+async def approve_all(body: ApproveAllIn):
+    """Approve every hotel with an email that's waiting for review, in a city or one area."""
+    return {"approved": leads.approve_all_with_email(body.city, body.area)}
+
+
 @router.post("/leads/{lead_id}/block")
 async def block_lead(lead_id: str):
     leads.block(lead_id)

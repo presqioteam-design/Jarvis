@@ -18,3 +18,4 @@ export const blockLead = (leadId: string) => call<{ ok: true }>(`/leads/${leadId
 export const scanPlace = (place: string, radiusKm: number | null) => call<{ id: string }>("/campaigns", { place, radiusKm });
 export const resumeScan = (id: string) => call<{ ok: true }>(`/campaigns/${id}/resume`, {});
 export const setLeadStatus = (ids: string[], status: "new" | "ready" | "not_interested") => call<{ ok: true }>("/leads/status", { ids, status });
+export const approveAllWithEmail = (city: string, area: string | null) => call<{ approved: number }>("/leads/approve-all", { city, area });
