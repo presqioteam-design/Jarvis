@@ -2,6 +2,16 @@ import { auth } from "./firebase";
 
 const API_URL = import.meta.env.VITE_API_URL as string;
 
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+/** The API's own explanation for refusals (e.g. the daily scan limit), else `fallback`. */
+export const errorText = (e: unknown, fallback: string) =>
+  e instanceof ApiError && e.status !== 401 && e.status < 500 ? e.message : fallback;
+
 async function call<T>(path: string, body: unknown): Promise<T> {
   const token = await auth.currentUser?.getIdToken();
   const res = await fetch(`${API_URL}${path}`, {
@@ -9,7 +19,17 @@ async function call<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    // FastAPI sends {"detail": "..."}; show that sentence when there is one
+    const text = await res.text();
+    let detail = "";
+    try {
+      detail = typeof JSON.parse(text).detail === "string" ? JSON.parse(text).detail : "";
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(res.status, detail || text);
+  }
   return res.json() as Promise<T>;
 }
 

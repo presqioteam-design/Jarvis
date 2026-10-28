@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { collection, doc, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import type { AreaSummary, Campaign, CitySummary } from "@jarvis/shared";
 import { db, userPath } from "../lib/firebase";
-import { resumeScan, scanPlace } from "../lib/api";
+import { errorText, resumeScan, scanPlace } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { slug, timeAgo } from "../lib/format";
 import Icon from "../components/Icon";
@@ -45,8 +45,8 @@ export default function Campaigns() {
     try {
       await scanPlace(place.trim(), mode === "city" ? null : radius);
       setPlace("");
-    } catch {
-      setError("Couldn't start the scan. Make sure the API is running (yarn api:dev).");
+    } catch (e) {
+      setError(errorText(e, "Couldn't start the scan. The server may be waking up; try again in a minute."));
     } finally {
       setBusy(false);
     }

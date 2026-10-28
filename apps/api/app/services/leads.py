@@ -8,10 +8,12 @@ searched again. Progress is saved on the campaign, so a stopped scan resumes.
 
 import logging
 import math
+from datetime import timedelta
 import re
 from collections import Counter, defaultdict
 
 import httpx
+from google.api_core.exceptions import ResourceExhausted
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from ..firebase import col, db
@@ -60,6 +62,24 @@ def by_status(status: str, limit: int = 20) -> list[dict]:
 
 
 # ── campaign ─────────────────────────────────────────────────────────────────
+# Free Firestore allows 50k reads and 20k writes a day. A whole-city scan of a
+# big city uses most of that, so: one city scan a day, one scan at a time.
+
+QUOTA_STOPPED = "Firestore's free daily limit was reached. Progress is saved: press Resume after 12:30 PM IST."
+
+
+def scan_blocked(whole_city: bool) -> str:
+    """Why a new scan can't start right now, or "" if it can."""
+    camps = [d.to_dict() for d in col("campaigns").stream()]
+    if any(c.get("status") == "searching" for c in camps):
+        return "Another scan is still running. Wait for it to finish (Jarvis messages you on Telegram)."
+    if whole_city:
+        day_ago = (now_utc() - timedelta(hours=24)).isoformat()
+        if any(c.get("kind") == "city" and c.get("createdAt", "") >= day_ago for c in camps):
+            return ("A whole-city scan already ran in the last 24 hours. To stay within the free database limit, "
+                    "scan one city a day. Search around a spot instead, or try again tomorrow.")
+    return ""
+
 
 def create_campaign(place: str, radius_m: int | None) -> str:
     """radius_m=None scans the whole city/town; otherwise a square around the spot."""
@@ -106,11 +126,22 @@ async def _run_campaign(campaign_id: str) -> None:
             scan["phase"] = "osm"
             ref.update({"scan.phase": "osm"})
         if scan["phase"] == "osm":
-            add_osm(await sources.osm_hotels(camp["box"]), campaign_id, city)
+            add_osm(await sources.osm_hotels(camp["box"]), campaign_id, city, camp["box"])
             ref.update({"scan.phase": "websites"})
         await crawl_city(city)
 
-        totals = recompute_areas(city)
+        if camp.get("kind") == "area":
+            # a spot search only touches nearby areas: don't re-read the whole city
+            nearby = leads_in_box(camp["box"], ["areaKey", "emails", "phone"])
+            for key in {l["areaKey"] for l in nearby if l.get("areaKey")}:
+                recompute_area(key)
+            totals = {
+                "total": len(nearby), "withEmail": sum(1 for l in nearby if l.get("emails")),
+                "withPhone": sum(1 for l in nearby if l.get("phone")),
+                "areas": len({l.get("areaKey") for l in nearby}),
+            }
+        else:
+            totals = recompute_areas(city)
         ref.update({
             "status": "ready", "scan.phase": "done",
             "stats.found": totals["total"], "stats.withEmail": totals["withEmail"], "stats.withPhone": totals["withPhone"],
@@ -121,11 +152,21 @@ async def _run_campaign(campaign_id: str) -> None:
         )
         activity.log("lead_found", text)
         await telegram.send(f"🏨 {text}")
+    except ResourceExhausted:
+        ref.update({"status": "failed", "error": QUOTA_STOPPED})
+        await telegram.send(f"⏸ Scan of {camp['name']} paused: {QUOTA_STOPPED}")
     except Exception as e:
         log.exception("Campaign %s failed", campaign_id)
         msg = str(e) if isinstance(e, ValueError) else "Search stopped. Start it again to resume."
         ref.update({"status": "failed", "error": msg})
         activity.log("error", f"Scan of {camp['area']['label']} stopped: {msg}")
+
+
+def leads_in_box(box: dict, fields: list[str]) -> list[dict]:
+    """Leads inside a map box. One range filter (latitude) needs no composite index; longitude is checked here."""
+    q = (col("leads").where(filter=FieldFilter("lat", ">=", box["s"])).where(filter=FieldFilter("lat", "<=", box["n"]))
+         .select(sorted({*fields, "lon"})))
+    return [d.to_dict() | {"id": d.id} for d in q.stream() if box["w"] <= d.to_dict().get("lon", 999) <= box["e"]]
 
 
 def square_around(lat: float, lon: float, radius_m: int) -> dict:
@@ -198,9 +239,11 @@ def upsert(hotels: list[dict], campaign_id: str, city: str) -> int:
     return new
 
 
-def add_osm(osm: list[dict], campaign_id: str, city: str) -> None:
+def add_osm(osm: list[dict], campaign_id: str, city: str, box: dict) -> None:
     """Add OpenStreetMap hotels the map scan missed; give them the nearest known area."""
-    known = [d.to_dict() | {"id": d.id} for d in col("leads").where(filter=FieldFilter("city", "==", city)).select(["name", "lat", "lon", "area", "phone"]).stream()]
+    if not osm:
+        return
+    known = leads_in_box(box, ["name", "lat", "area", "phone"])
     cells = defaultdict(list)
     for k in known:
         cells[(round(k["lat"], 2), round(k["lon"], 2))].append(k)

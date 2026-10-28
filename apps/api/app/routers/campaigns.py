@@ -1,6 +1,6 @@
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..deps import require_user
@@ -23,6 +23,8 @@ class StatusIn(BaseModel):
 async def create_campaign(body: CampaignIn, background: BackgroundTasks):
     """Starts the scan and returns at once; the dashboard watches the campaign in Firestore."""
     radius = int(body.radiusKm * 1000) if body.radiusKm else None
+    if reason := leads.scan_blocked(whole_city=radius is None):
+        raise HTTPException(429, reason)
     campaign_id = leads.create_campaign(body.place.strip(), radius)
     background.add_task(leads.run_campaign, campaign_id)
     return {"id": campaign_id}

@@ -258,6 +258,8 @@ def run_action(action: dict) -> tuple[bool, str]:
         if not place:
             return False, "Which city or area should I scan?"
         radius = action.get("radius_km")
+        if reason := leads.scan_blocked(whole_city=not radius):
+            return False, f"⚠️ {reason}"
         campaign_id = leads.create_campaign(place, int(float(radius) * 1000) if radius else None)
         task = asyncio.create_task(leads.run_campaign(campaign_id))
         _tasks.add(task)
