@@ -1,12 +1,18 @@
 {
   "name": "jarvis",
   "private": true,
-  "packageManager": "pnpm@9.12.0",
+  "packageManager": "yarn@1.22.22",
+  "workspaces": [
+    "apps/frontend",
+    "apps/cron",
+    "packages/*"
+  ],
   "scripts": {
-    "dev:web": "pnpm --filter web dev",
-    "build:web": "pnpm --filter web build",
-    "dev:cron": "pnpm --filter cron dev",
-    "deploy:cron": "pnpm --filter cron deploy",
-    "typecheck": "pnpm -r typecheck"
+    "ui:dev": "yarn workspace frontend dev",
+    "ui:build": "yarn workspace frontend build",
+    "api:dev": "cd apps/api && .venv/bin/uvicorn app.main:app --reload --port 8000",
+    "cron:dev": "yarn workspace cron dev",
+    "cron:deploy": "yarn workspace cron deploy",
+    "typecheck": "yarn workspaces run typecheck"
   }
 }

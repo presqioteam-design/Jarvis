@@ -5,7 +5,7 @@
 | Component | Runs on | Job |
 |---|---|---|
 | `apps/api` | Render | The brain: finds and enriches leads, sends and reads email, classifies replies, answers the admin, runs scheduled jobs. |
-| `apps/web` | Cloudflare Pages | Dashboard. Signs in with Firebase Auth and reads Firestore with live listeners; calls the API for chat and actions. |
+| `apps/frontend` | Cloudflare Pages | Dashboard. Signs in with Firebase Auth and reads Firestore with live listeners; calls the API for chat and actions. |
 | `apps/cron` | Cloudflare Workers | Cron Triggers that POST to `/jobs/*` on the API. They also wake the free Render instance. |
 | Firestore | Firebase | Single source of truth. |
 

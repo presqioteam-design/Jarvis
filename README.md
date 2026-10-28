@@ -18,7 +18,7 @@ React dashboard ◄──live──► Firestore ◄──► FastAPI (Render) �
 jarvis/
 ├── apps/
 │   ├── api/          FastAPI backend, "the brain" (deploys to Render)
-│   ├── web/          React + Vite dashboard (deploys to Cloudflare Pages)
+│   ├── frontend/     React + Vite dashboard (deploys to Cloudflare Pages)
 │   └── cron/         Cloudflare Worker with Cron Triggers that call the API
 ├── packages/
 │   └── shared/       TypeScript types for the Firestore data model
@@ -50,10 +50,10 @@ Full field list: [`packages/shared/src/types.ts`](packages/shared/src/types.ts).
 cd apps/api
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp .env.example .env            # fill in the keys
-.venv/bin/uvicorn app.main:app --reload
+cd ../.. && yarn api:dev         # localhost:8000
 
 # Dashboard
-pnpm install && pnpm dev:web    # needs apps/web/.env
+yarn install && yarn ui:dev     # needs apps/frontend/.env, runs on localhost:3000
 ```
 
 Run a job by hand: `curl -X POST localhost:8000/jobs/daily-report -H "X-Cron-Secret: <CRON_SECRET>"`
@@ -62,7 +62,7 @@ Run a job by hand: `curl -X POST localhost:8000/jobs/daily-report -H "X-Cron-Sec
 
 | Service | Used for | Env var |
 |---|---|---|
-| Firebase (Spark) | Auth, Firestore | `service-account.json`, `apps/web/.env` |
+| Firebase (Spark) | Auth, Firestore | `service-account.json`, `apps/frontend/.env` |
 | TomTom developer | Hotel search | `TOMTOM_API_KEY` |
 | Google AI Studio | Gemini | `GEMINI_API_KEY` |
 | Gmail + App Password | Sending and reading email | `EMAIL_ADDRESS`, `EMAIL_APP_PASSWORD` |
@@ -70,7 +70,7 @@ Run a job by hand: `curl -X POST localhost:8000/jobs/daily-report -H "X-Cron-Sec
 
 ## Deploying (later)
 - **API on Render:** New → Blueprint → this repo; fill in the env vars from `apps/api/.env.example`.
-- **Dashboard on Cloudflare Pages:** build `pnpm install && pnpm --filter web build`, output `apps/web/dist`.
+- **Dashboard on Cloudflare Pages:** build `yarn install && yarn ui:build`, output `apps/frontend/dist`.
 - **Cron worker:** `cd apps/cron && npx wrangler secret put API_URL && npx wrangler secret put CRON_SECRET && npx wrangler deploy`.
 - **Telegram webhook:** `curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=<API_URL>/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"`
 

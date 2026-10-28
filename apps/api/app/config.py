@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     firebase_service_account_json: str = ""
     google_application_credentials: str = ""
 
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:3000"
     cron_secret: str = ""
 
     llm_provider: str = "gemini"
