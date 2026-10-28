@@ -6,6 +6,8 @@ import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Chat from "./pages/Chat";
+import Campaigns from "./pages/Campaigns";
+import Leads from "./pages/Leads";
 
 export default function App() {
   return (
@@ -14,6 +16,8 @@ export default function App() {
       <Route element={<SignedIn><Layout /></SignedIn>}>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/chat" element={<Chat />} />
+        <Route path="/campaigns" element={<Campaigns />} />
+        <Route path="/leads" element={<Leads />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

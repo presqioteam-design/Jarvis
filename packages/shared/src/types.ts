@@ -11,9 +11,10 @@ export interface Campaign {
   name: string;
   area: { label: string; lat: number; lon: number; radiusM: number };
   query: string;                 // what to search for, e.g. "hotel"
-  status: "draft" | "active" | "paused" | "done";
+  status: "searching" | "ready" | "failed" | "active" | "paused" | "done";
+  error?: string;                // set when status is "failed"
   createdAt: string;
-  stats: { found: number; emailed: number; replied: number; interested: number };
+  stats: { found: number; withEmail: number; withPhone: number; emailed: number; replied: number; interested: number };
 }
 
 export type LeadStatus =

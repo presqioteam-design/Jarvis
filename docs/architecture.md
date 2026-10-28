@@ -19,7 +19,7 @@ new ─► ready ─► emailed ─► replied ─► interested ─► demo ─
 
 ## Flows
 
-**Find leads.** Admin creates a campaign (area + radius) → API searches TomTom (and OpenStreetMap) → crawls each hotel's website for emails and phones → saves `leads`. *(step 2)*
+**Find leads.** Dashboard → `POST /campaigns` (area + radius) → background task geocodes the area, searches TomTom and OpenStreetMap, merges duplicates, crawls hotel websites for emails and phones (skipping chain/booking-site addresses) → saves `leads` as `new` (has a contact) or `no_contact` → Telegram summary. The admin approves leads (`ready`) or blocks them (`POST /leads/{id}/block` → `dnc`).
 
 **Outreach.** Cron → `/jobs/send-emails` → sends today's quota of first emails and due follow-ups through Gmail SMTP → logs `messages` and `activity`. *(step 3)*
 

@@ -27,7 +27,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 Inte
 h1, h2 { font-family: "Space Grotesk", sans-serif; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
 h2 { font-size: 18px; }
 a { color: inherit; text-decoration: none; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 code { font: 13px "JetBrains Mono", monospace; background: rgba(255,255,255,0.06); padding: 1px 6px; border-radius: 6px; }
 .icon { flex: none; display: block; }
 
@@ -169,6 +169,64 @@ code { font: 13px "JetBrains Mono", monospace; background: rgba(255,255,255,0.06
 .composer { display: flex; gap: 10px; }
 .btn.send { width: 48px; min-height: 48px; padding: 0; }
 
+/* ── campaigns ────────────────────────────────────── */
+.sub { margin: 6px 0 0; }
+.page.wide { max-width: 1280px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field.grow { flex: 1; min-width: 220px; }
+.field label { font-size: 13px; color: var(--muted); }
+.field .input { flex: none; }
+select.input { appearance: none; padding-right: 36px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238f9bab' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center; }
+.campaign-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.campaign-form .btn { min-height: 48px; }
+.examples { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.chip.small { min-height: 30px; font-size: 13px; padding: 0 12px; }
+.empty-card { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 40px 24px; color: var(--muted); }
+.empty-card p { margin: 0; }
+.campaigns { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.campaign { display: flex; flex-direction: column; gap: 16px; }
+.campaign .card-head { margin: 0; align-items: flex-start; }
+.campaign p { margin: 0; }
+.campaign .btn { align-self: flex-start; }
+.stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat { display: flex; flex-direction: column; padding: 12px; border-radius: 12px; background: var(--panel-2); }
+.stat-value { font: 600 24px/1.2 "Space Grotesk", sans-serif; }
+.pill.searching { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-soft); color: var(--accent); }
+.pill.failed { background: rgba(252,165,165,.12); color: var(--danger); }
+.pill.done { background: rgba(52,211,153,.14); color: var(--c-customer); }
+.spinner { width: 10px; height: 10px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── leads ────────────────────────────────────────── */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.tabs { display: flex; gap: 4px; overflow-x: auto; padding: 4px; border-radius: 14px; background: var(--panel); border: 1px solid var(--border); max-width: 100%; }
+.tab { flex: none; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px; border-radius: 10px; border: 0; background: none; color: var(--muted); cursor: pointer; }
+.tab:hover { color: var(--text); }
+.tab.active { background: var(--panel-2); color: var(--text); font-weight: 600; }
+.count { font-size: 12px; padding: 0 7px; border-radius: 999px; background: rgba(255,255,255,.06); }
+.tab.active .count { background: var(--accent-soft); color: var(--accent); }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; }
+.filters .input { height: 40px; min-width: 200px; flex: none; }
+.filters input.input { min-width: 280px; }
+.table-card { padding: 6px 20px; }
+.table-card .empty { padding: 24px 0; }
+.leads { list-style: none; margin: 0; padding: 0; }
+.lead { display: grid; grid-template-columns: minmax(180px, 1.2fr) minmax(220px, 1.4fr) auto auto; align-items: center; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.lead:last-child { border-bottom: 0; }
+.lead-main { min-width: 0; }
+.lead-contact { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.contact { display: inline-flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.contact:hover { color: var(--accent); }
+.lead-actions { display: flex; align-items: center; gap: 4px; justify-content: flex-end; min-width: 120px; }
+.btn.small-btn { min-height: 34px; padding: 0 14px; font-size: 14px; }
+.pill.new { background: var(--accent-soft); color: var(--accent); }
+.pill.ready { background: rgba(52,211,153,.14); color: var(--c-customer); }
+.pill.emailed { background: rgba(56,189,248,.10); color: var(--c-emailed); }
+.pill.customer { background: rgba(52,211,153,.2); color: var(--c-customer); }
+.pill.unsubscribed, .pill.bounced, .pill.not_interested { background: rgba(252,165,165,.10); color: var(--danger); }
+
 /* ── responsive ───────────────────────────────────── */
 @media (max-width: 900px) {
   .login { grid-template-columns: 1fr; }
@@ -176,7 +234,7 @@ code { font: 13px "JetBrains Mono", monospace; background: rgba(255,255,255,0.06
   .login-panel { padding: 24px 16px 40px; }
 }
 @media (max-width: 800px) {
-  .shell { grid-template-columns: 1fr; }
+  .shell { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .sidebar { position: sticky; z-index: 10; height: auto; flex-direction: row; align-items: center; gap: 8px; padding: 10px 16px; border-right: 0; border-bottom: 1px solid var(--border); }
   .brand { padding: 0; }
   .sidebar .brand-sub, .profile-text, .navlink span, .soon { display: none; }
@@ -189,4 +247,13 @@ code { font: 13px "JetBrains Mono", monospace; background: rgba(255,255,255,0.06
   .title { font-size: 26px; }
   .chat { height: calc(100dvh - 124px); }
   .msg { max-width: 88%; }
+  .lead { grid-template-columns: 1fr auto; gap: 8px 12px; }
+  .lead-contact { grid-column: 1 / -1; grid-row: 2; }
+  .lead-actions { grid-column: 1 / -1; justify-content: flex-start; min-width: 0; }
+  .lead .pill { grid-column: 2; grid-row: 1; }
+  .filters { flex-direction: column; width: 100%; }
+  .filters .input, .filters input.input { width: 100%; min-width: 0; }
+}
+@media (max-width: 420px) {
+  .sidebar .brand-name { display: none; }
 }

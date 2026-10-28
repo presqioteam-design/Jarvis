@@ -197,15 +197,18 @@ function Kpi({ icon, label, value, note, accent }: { icon: IconName; label: stri
 function GettingStarted() {
   const steps = [
     { done: true, title: "Sign in to the dashboard", text: "You're in." },
-    { done: false, title: "Connect the backend", text: "Copy your User UID into apps/api/.env as JARVIS_UID." },
+    { done: true, title: "Connect the database", text: "Firestore rules are published." },
     { done: false, title: "Create your first campaign", text: "Pick an area like Madhapur and let Jarvis find hotels." },
-    { done: false, title: "Send the first emails", text: "Review the leads and start outreach from Gmail." },
+    { done: false, title: "Approve leads", text: "Choose which hotels Jarvis should email." },
   ];
   return (
     <section className="card">
       <div className="card-head">
         <h2>Getting started</h2>
-        <span className="muted small">1 of {steps.length} done</span>
+        <Link to="/campaigns" className="btn primary">
+          <Icon name="campaign" size={18} />
+          Start a campaign
+        </Link>
       </div>
       <ol className="steps">
         {steps.map((s, i) => (

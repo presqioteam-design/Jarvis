@@ -14,3 +14,5 @@ async function call<T>(path: string, body: unknown): Promise<T> {
 }
 
 export const sendChat = (message: string) => call<{ reply: string }>("/chat", { message });
+export const createCampaign = (area: string, radiusKm: number) => call<{ id: string }>("/campaigns", { area, radiusKm });
+export const blockLead = (leadId: string) => call<{ ok: true }>(`/leads/${leadId}/block`, {});

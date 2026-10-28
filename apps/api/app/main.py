@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routers import chat, jobs, telegram
+from .routers import campaigns, chat, jobs, telegram
 
 logging.basicConfig(level=logging.INFO)
 
@@ -17,6 +17,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
+app.include_router(campaigns.router)
 app.include_router(chat.router)
 app.include_router(jobs.router)
 app.include_router(telegram.router)

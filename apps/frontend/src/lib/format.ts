@@ -14,3 +14,12 @@ export function timeAgo(iso: string, now = Date.now()): string {
 export function percent(part: number, whole: number): string {
   return whole ? `${Math.round((part / whole) * 100)}%` : "0%";
 }
+
+/** "https://www.hotel.com/x" -> "hotel.com"; returns the input if it isn't a valid URL */
+export function hostname(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}

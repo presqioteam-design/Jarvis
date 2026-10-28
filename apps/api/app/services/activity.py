@@ -1,5 +1,7 @@
 """Log of what Jarvis did. Feeds the dashboard and the daily report."""
 
+from google.cloud.firestore_v1.base_query import FieldFilter
+
 from ..firebase import col
 from ..timeutil import now_utc
 
@@ -12,5 +14,5 @@ def log(type_: str, text: str, lead_id: str | None = None) -> None:
 
 
 def since(iso: str) -> list[dict]:
-    docs = col("activity").where("at", ">=", iso).stream()
+    docs = col("activity").where(filter=FieldFilter("at", ">=", iso)).stream()
     return sorted((d.to_dict() for d in docs), key=lambda a: a["at"])
