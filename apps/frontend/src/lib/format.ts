@@ -10,3 +10,7 @@ export function timeAgo(iso: string, now = Date.now()): string {
   if (min < 24 * 60) return `${Math.floor(min / 60)}h ago`;
   return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
+
+export function percent(part: number, whole: number): string {
+  return whole ? `${Math.round((part / whole) * 100)}%` : "0%";
+}
