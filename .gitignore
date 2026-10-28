@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 service-account*.json
+client_secret*.json
 .dev.vars
 
 # node
