@@ -5,6 +5,7 @@ services:
     name: jarvis-api
     runtime: docker
     plan: free
+    region: singapore
     rootDir: apps/api
     dockerfilePath: ./Dockerfile
     dockerContext: .
@@ -55,5 +56,6 @@ services:
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
+      # letters, digits, _ and - only (Telegram rejects other characters): openssl rand -hex 24
       - key: TELEGRAM_WEBHOOK_SECRET
-        generateValue: true
+        sync: false
