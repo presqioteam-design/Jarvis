@@ -11,9 +11,15 @@ from fastapi import APIRouter, Depends
 from ..config import get_settings
 from ..deps import require_cron
 from ..timeutil import now_local
-from ..services import activity, leads, telegram
+from ..services import activity, inbox, leads, telegram
 
 router = APIRouter(prefix="/jobs", tags=["jobs"], dependencies=[Depends(require_cron)])
+
+
+@router.post("/check-replies")
+async def check_replies():
+    """Called every 30 minutes in the day; also keeps the free Render instance awake."""
+    return {"ok": True, "newReplies": await inbox.check()}
 
 
 @router.post("/daily-report")

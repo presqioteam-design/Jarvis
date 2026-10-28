@@ -16,7 +16,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 from ..firebase import col, db
 from ..timeutil import now_utc
-from . import activity, crawler, sources, telegram
+from . import activity, crawler, keepalive, sources, telegram
 
 log = logging.getLogger(__name__)
 SAME_PLACE_M = 200      # two results this close with similar names are one hotel
@@ -78,6 +78,11 @@ def create_campaign(place: str, radius_m: int | None) -> str:
 
 async def run_campaign(campaign_id: str) -> None:
     """Background task. Safe to call again on a stopped campaign: it resumes."""
+    async with keepalive.awake():
+        await _run_campaign(campaign_id)
+
+
+async def _run_campaign(campaign_id: str) -> None:
     ref = col("campaigns").document(campaign_id)
     camp = ref.get().to_dict()
     try:

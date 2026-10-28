@@ -10,13 +10,15 @@ export interface Env {
 }
 
 const JOBS: Record<string, string> = {
-  "30 13 * * MON-SAT": "/jobs/daily-report",
+  "*/30 4-14 * * MON-SAT": "/jobs/check-replies",   // every 30 min, 9:30 AM–8 PM IST
+  "30 13 * * MON-SAT": "/jobs/daily-report",        // 7 PM IST
 };
 
 async function runJob(env: Env, path: string): Promise<void> {
   const url = `${env.API_URL.replace(/\/$/, "")}${path}`;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
+      // a sleeping free Render instance takes up to a minute to wake, hence the long timeout
       const res = await fetch(url, {
         method: "POST",
         headers: { "X-Cron-Secret": env.CRON_SECRET },

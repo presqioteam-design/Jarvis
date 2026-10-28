@@ -1,0 +1,10 @@
+# never bake secrets or local files into the image
+.env
+.env.*
+service-account*.json
+.venv/
+__pycache__/
+*.pyc
+scripts/
+Dockerfile
+.dockerignore

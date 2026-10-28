@@ -3,10 +3,11 @@ main = "src/index.ts"
 compatibility_date = "2024-10-22"
 
 # Cron Triggers run in UTC. IST = UTC+5:30, Monday–Saturday.
-#   13:30 UTC = 19:00 IST  → daily report on Telegram
+#   every 30 min 04:00–14:30 UTC = 9:30 AM–8 PM IST → check replies (also keeps Render awake)
+#   13:30 UTC = 19:00 IST → daily report on Telegram
 # Keep these strings identical to the JOBS map in src/index.ts.
 [triggers]
-crons = ["30 13 * * MON-SAT"]
+crons = ["*/30 4-14 * * MON-SAT", "30 13 * * MON-SAT"]
 
 # Secrets (set with `wrangler secret put`): API_URL, CRON_SECRET
 # For local dev, put them in a .dev.vars file (gitignored).

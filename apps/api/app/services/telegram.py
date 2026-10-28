@@ -54,6 +54,17 @@ async def typing() -> None:
             await client.post(api("sendChatAction"), json={"chat_id": get_settings().telegram_chat_id, "action": "typing"})
 
 
+async def set_webhook() -> None:
+    """When deployed, point Telegram at /telegram/webhook (with our secret) on startup."""
+    s = get_settings()
+    url = f"{s.render_external_url.rstrip('/')}/telegram/webhook"
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(api("setWebhook"), json={
+            "url": url, "secret_token": s.telegram_webhook_secret, "allowed_updates": ["message"],
+        })
+    log.info("Telegram webhook -> %s: %s", url, r.json().get("description", r.status_code))
+
+
 async def poll(handle: Callable[[str], Awaitable[None]]) -> None:
     """Long-poll for the admin's messages forever. Messages from anyone else are ignored."""
     s = get_settings()

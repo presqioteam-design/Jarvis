@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = ""
     telegram_mode: str = "polling"   # "polling" for local dev, "webhook" when deployed
 
+    # Render sets this to the service's public URL (https://<name>.onrender.com)
+    render_external_url: str = ""
+
     @property
     def tz(self) -> ZoneInfo:
         return ZoneInfo(self.timezone)

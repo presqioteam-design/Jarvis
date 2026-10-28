@@ -56,7 +56,7 @@ cd ../.. && yarn api:dev         # localhost:8000
 yarn install && yarn ui:dev     # needs apps/frontend/.env, runs on localhost:3000
 ```
 
-Run a job by hand: `curl -X POST localhost:8000/jobs/daily-report -H "X-Cron-Secret: <CRON_SECRET>"`
+Run a job by hand: `curl -X POST localhost:8000/jobs/check-replies -H "X-Cron-Secret: <CRON_SECRET>"`
 
 ## Accounts and keys (all free, no card)
 
@@ -68,11 +68,58 @@ Run a job by hand: `curl -X POST localhost:8000/jobs/daily-report -H "X-Cron-Sec
 | Gmail + App Password | Sending and reading email | `EMAIL_ADDRESS`, `EMAIL_APP_PASSWORD` |
 | Telegram @BotFather | Alerts, chat | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
 
-## Deploying (later)
-- **API on Render:** New → Blueprint → this repo; fill in the env vars from `apps/api/.env.example`.
-- **Dashboard on Cloudflare Pages:** build `yarn install && yarn ui:build`, output `apps/frontend/dist`.
-- **Cron worker:** `cd apps/cron && npx wrangler secret put API_URL && npx wrangler secret put CRON_SECRET && npx wrangler deploy`.
-- **Telegram webhook:** `curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=<API_URL>/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"`
+## Deploying (all free)
+
+| Part | Where | Notes |
+|---|---|---|
+| Backend `apps/api` | Render free plan (Docker) | Sleeps after 15 min idle; Telegram and the cron worker wake it |
+| Dashboard `apps/frontend` | Cloudflare Pages | Static site |
+| Scheduled jobs `apps/cron` | Cloudflare Workers | Checks replies every 30 min (9:30 AM–8 PM IST), daily report at 7 PM |
+
+### 1. GitHub
+```bash
+gh auth login
+gh repo create presqio-jarvis --private --source . --push
+```
+
+### 2. Backend on Render
+1. render.com → **New → Blueprint** → pick the repo. It reads `render.yaml` and builds `apps/api/Dockerfile`.
+2. Fill in the values it asks for:
+   - `JARVIS_UID`, `GEMINI_API_KEY`, `TOMTOM_API_KEY`, `EMAIL_ADDRESS`, `EMAIL_APP_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`: same as in your local `apps/api/.env`
+   - `FIREBASE_SERVICE_ACCOUNT_JSON`: paste the whole contents of `apps/api/service-account.json`
+   - `CORS_ORIGINS`: your Pages address from step 3, e.g. `https://presqio-jarvis.pages.dev` (fill it in after step 3)
+3. Deploy, then check `https://<your-service>.onrender.com/health` returns `{"ok":true}`.
+4. On startup the API registers the Telegram webhook itself (`TELEGRAM_MODE=webhook`). Message the bot `help` to check.
+5. Test sending with `send 1` in Telegram. If the Render logs show an SMTP connection error, Render is blocking email ports on the free plan; see "If email is blocked" below.
+
+> ⚠️ Don't run `yarn api:dev` on your computer while Render is live: local mode switches Telegram back to polling and disconnects the deployed bot. To go back to Render afterwards, restart the Render service so it re-registers the webhook.
+
+### 3. Dashboard on Cloudflare Pages
+1. dash.cloudflare.com → **Workers & Pages → Create → Pages → Connect to Git** → pick the repo.
+2. Build command `yarn install && yarn ui:build`, build output directory `apps/frontend/dist`.
+3. Environment variables: everything in `apps/frontend/.env`, with `VITE_API_URL` set to your Render URL. Add `NODE_VERSION` = `20`.
+4. Firebase console → **Authentication → Settings → Authorized domains** → add your `*.pages.dev` address, or Google sign-in is refused.
+5. Put the Pages address into Render's `CORS_ORIGINS`.
+
+### 4. Cron worker on Cloudflare
+```bash
+cd apps/cron
+npx wrangler login
+npx wrangler secret put API_URL       # https://<your-service>.onrender.com
+npx wrangler secret put CRON_SECRET   # copy CRON_SECRET from Render → Environment
+npx wrangler deploy
+```
+
+### 5. Firestore rules
+Firebase console → Firestore → **Rules** → paste `firebase/firestore.rules` → **Publish**.
+
+### If email is blocked on Render
+Render may block outgoing SMTP on free instances. Options: run the backend on your own computer (`yarn api:dev`, with Cloudflare Tunnel for a public URL), or switch `apps/api/app/services/mailer.py` to the Gmail API, which sends over HTTPS.
+
+### Free-tier limits to keep in mind
+- Firestore Spark: 50k reads and 20k writes a day. A whole-city scan uses a lot of both; scan at most one city a day.
+- Gmail: stay within `DAILY_EMAIL_CAP` (50).
+- TomTom: about 2,500 searches a day; the Hyderabad scan used ~460.
 
 ## Outreach rules
 - Every email has an opt-out line; anyone who opts out goes on the do-not-contact list and is never contacted again.

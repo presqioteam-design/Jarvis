@@ -1,40 +1,50 @@
-# Render blueprint: New → Blueprint → pick this repo
+# Render blueprint: New → Blueprint → pick this repo.
+# "sync: false" values are asked for once in the Render dashboard; they never live in git.
 services:
   - type: web
     name: jarvis-api
-    runtime: python
+    runtime: docker
     plan: free
     rootDir: apps/api
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /health
+    autoDeploy: true
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.12.7"
+      # who Jarvis works for
       - key: JARVIS_UID
         sync: false
       - key: TIMEZONE
         value: Asia/Kolkata
+      # Firebase: paste the whole service-account.json file contents
       - key: FIREBASE_SERVICE_ACCOUNT_JSON
         sync: false
+      # the dashboard's address on Cloudflare Pages, e.g. https://presqio-jarvis.pages.dev
       - key: CORS_ORIGINS
         sync: false
+      # shared with the Cloudflare cron worker
       - key: CRON_SECRET
         generateValue: true
+      # AI
       - key: LLM_PROVIDER
         value: gemini
-      - key: LLM_MODEL
-        sync: false
       - key: GEMINI_API_KEY
         sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
+      # hotel search
       - key: TOMTOM_API_KEY
         sync: false
+      # outreach Gmail
       - key: EMAIL_ADDRESS
         sync: false
       - key: EMAIL_APP_PASSWORD
         sync: false
+      - key: SENDER_NAME
+        value: Presqio Team
+      - key: DAILY_EMAIL_CAP
+        value: "50"
+      # Telegram: webhook mode registers itself on startup using RENDER_EXTERNAL_URL
+      - key: TELEGRAM_MODE
+        value: webhook
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID

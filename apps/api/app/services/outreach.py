@@ -14,7 +14,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from ..config import get_settings
 from ..firebase import col
 from ..timeutil import now_local, now_utc
-from . import activity, inbox, leads, mailer, telegram, templates
+from . import activity, inbox, keepalive, leads, mailer, telegram, templates
 
 log = logging.getLogger(__name__)
 FOLLOW_UP_GAP_DAYS = [3, 4]     # follow-up 1 three days after the first email, follow-up 2 four days later
@@ -103,6 +103,12 @@ async def send_follow_ups(count: int = 50) -> None:
 
 async def run(targets: list[dict], step: int | None) -> None:
     """step=0 for first emails; None means each lead's next follow-up."""
+    async with keepalive.awake():
+        sent, failed = await _send_all(targets, step)
+    await _report(sent, failed, step)
+
+
+async def _send_all(targets: list[dict], step: int | None) -> tuple[list[dict], list[str]]:
     sent, failed = [], []
     for i, lead in enumerate(targets):
         n = lead.get("followUps", 0) + 1 if step is None else step
@@ -118,6 +124,10 @@ async def run(targets: list[dict], step: int | None) -> None:
         if i < len(targets) - 1:
             await asyncio.sleep(random.uniform(*PAUSE_SECONDS))
 
+    return sent, failed
+
+
+async def _report(sent: list[dict], failed: list[str], step: int | None) -> None:
     if sent:
         leads.recompute_area_of([l["id"] for l in sent])
     kind = "first emails" if step == 0 else "follow-ups"
