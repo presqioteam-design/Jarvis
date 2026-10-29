@@ -65,9 +65,34 @@ async def set_webhook() -> None:
     log.info("Telegram webhook -> %s: %s", url, r.json().get("description", r.status_code))
 
 
-async def poll(handle: Callable[[str], Awaitable[None]]) -> None:
+async def send_voice(audio: bytes, kind: str, caption: str = "") -> None:
+    """kind "ogg" → a voice note; "wav" (no ffmpeg) → an audio file."""
+    if not enabled():
+        return
+    method, field, name = ("sendVoice", "voice", "jarvis.ogg") if kind == "ogg" else ("sendDocument", "document", "jarvis.wav")
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(api(method), data={"chat_id": get_settings().telegram_chat_id, "caption": caption[:1000]},
+                              files={field: (name, audio)})
+        if r.status_code != 200:
+            log.warning("Telegram voice failed: %s %s", r.status_code, r.text[:200])
+
+
+async def download(file_id: str) -> bytes:
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.get(api("getFile"), params={"file_id": file_id})
+        path = r.json()["result"]["file_path"]
+        f = await client.get(f"https://api.telegram.org/file/bot{get_settings().telegram_bot_token}/{path}")
+        f.raise_for_status()
+        return f.content
+
+
+def wanted(msg: dict) -> bool:
+    """A text or voice message from the admin; everything else is ignored."""
+    return bool(msg.get("text") or msg.get("voice")) and str(msg.get("chat", {}).get("id")) == get_settings().telegram_chat_id
+
+
+async def poll(handle: Callable[[dict], Awaitable[None]]) -> None:
     """Long-poll for the admin's messages forever. Messages from anyone else are ignored."""
-    s = get_settings()
     async with httpx.AsyncClient(timeout=40) as client:
         await client.post(api("deleteWebhook"))   # polling and a webhook can't both be active
         offset = 0
@@ -81,5 +106,5 @@ async def poll(handle: Callable[[str], Awaitable[None]]) -> None:
             for u in updates:
                 offset = u["update_id"] + 1
                 msg = u.get("message") or {}
-                if msg.get("text") and str(msg.get("chat", {}).get("id")) == s.telegram_chat_id:
-                    asyncio.create_task(handle(msg["text"]))
+                if wanted(msg):
+                    asyncio.create_task(handle(msg))

@@ -23,7 +23,7 @@ async def lifespan(_app: FastAPI):
         if s.telegram_mode == "webhook" and s.render_external_url and s.telegram_webhook_secret:
             await telegram_service.set_webhook()
         elif s.telegram_mode == "polling":
-            tasks.append(asyncio.create_task(telegram_service.poll(chat_service.on_telegram)))
+            tasks.append(asyncio.create_task(telegram_service.poll(chat_service.on_telegram_message)))
             logging.info("Listening for Telegram messages (polling)")
     yield
     for t in tasks:

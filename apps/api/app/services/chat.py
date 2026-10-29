@@ -15,7 +15,7 @@ from google.api_core.exceptions import ResourceExhausted
 from ..config import get_settings
 from ..firebase import col
 from ..timeutil import now_local, now_utc
-from . import activity, inbox, leads, llm, outreach, presqio, telegram
+from . import activity, inbox, leads, llm, outreach, presqio, report, telegram, voice
 
 log = logging.getLogger(__name__)
 _tasks: set[asyncio.Task] = set()   # keep background scans alive
@@ -35,6 +35,8 @@ or, when the admin clearly asks you to do something, one of these actions:
 {{"reply": "...", "action": {{"name": "send_emails", "count": <1-50>, "area": "<locality only, e.g. Madhapur, or null>"}}}}
 {{"reply": "...", "action": {{"name": "send_follow_ups"}}}}
 {{"reply": "...", "action": {{"name": "check_replies"}}}}
+{{"reply": "...", "action": {{"name": "auto", "on": true|false}}}}   (turn automatic sending on or off)
+{{"reply": "...", "action": {{"name": "report"}}}}   (today's report now)
 {{"reply": "...", "action": {{"name": "list_leads", "area": "<locality or null>", "status": "new|ready|emailed|replied|interested|no_contact"}}}}
 {{"reply": "...", "action": {{"name": "approve", "numbers": [<numbers from the last list>]}}}}
 {{"reply": "...", "action": {{"name": "approve_all", "area": "<locality or null for the whole city>"}}}}
@@ -84,7 +86,8 @@ def context_block() -> str:
     return (
         f"PIPELINE (all areas): {pipeline}\n"
         f"EMAILS TODAY: {outreach.sent_today()} of {s.daily_email_cap} daily limit; "
-        f"follow-ups due now: {len(outreach.due_follow_ups(100))}; sending right now: {'yes' if outreach.busy() else 'no'}\n\n"
+        f"follow-ups due now: {len(outreach.due_follow_ups(100))}; sending right now: {'yes' if outreach.busy() else 'no'}\n"
+        f"AUTO-SEND: {'on' if outreach.auto_enabled() else 'paused'} ({outreach.auto_window()})\n\n"
         f"MOST EMAILS (sorted): {most_email}\n\n"
         f"AREAS (biggest first):\n{area_lines}\n\n"
         f"NEEDS ATTENTION:\n{hot_lines}\n\n"
@@ -134,7 +137,12 @@ def save(role: str, text: str, channel: str) -> None:
 
 HELP = """Here's what you can tell me:
 
-📤 Sending
+🤖 Automatic sending
+• auto status — is it on, and today's progress
+• pause auto / resume auto
+(Runs every 30 min, 10 AM–2 PM Mon–Sat; I message you after every batch.)
+
+📤 Sending by hand (any time, on top of auto)
 • send 10 — email 10 hotels (approved ones first)
 • send 5 in Hitech City — only that area
 • send follow ups — follow-ups that are due (day 3 and day 7)
@@ -156,11 +164,18 @@ HELP = """Here's what you can tell me:
 • which area has the most emails?
 • what does Presqio cost? (I'll say: call us)
 
-I'll message you by myself when a hotel replies, when a batch is sent, and at 7 PM with the daily report."""
+📊 report — today's numbers now (also sent at 7 PM, with a voice note)
+🎙 You can send me voice notes too.
+
+I'll message you by myself when a hotel replies, after every batch, and at 7 PM with the daily report."""
 
 # Core commands are matched by pattern, not left to the AI, so they always behave the same.
 COMMANDS = [
     (re.compile(r"^/?(help|start|commands|menu|what can you do\??)$", re.I), lambda m: {"name": "help"}),
+    (re.compile(r"^(pause|stop)\s+auto(?:[\s-]?send(?:ing)?)?[.!]*$", re.I), lambda m: {"name": "auto", "on": False}),
+    (re.compile(r"^(resume|start)\s+auto(?:[\s-]?send(?:ing)?)?[.!]*$", re.I), lambda m: {"name": "auto", "on": True}),
+    (re.compile(r"^auto(?:[\s-]?send)?\s+status\??$|^status\??$", re.I), lambda m: {"name": "auto_status"}),
+    (re.compile(r"^/?(daily\s+)?report[.!?]*$", re.I), lambda m: {"name": "report"}),
     (re.compile(r"^send\s+(\d+)(?:\s+(?:new\s+)?(?:e-?mails?|mails?))?(?:\s+(?:in|to|from|at)\s+(.+?))?[.!]*$", re.I),
      lambda m: {"name": "send_emails", "count": int(m[1]), "area": m[2]}),
     (re.compile(r"^send\s+follow[\s-]?ups?[.!]*$", re.I), lambda m: {"name": "send_follow_ups"}),
@@ -221,6 +236,20 @@ def run_action(action: dict) -> tuple[bool, str]:
         return outreach.start(outreach.send_follow_ups()), ""
     if name == "help":
         return False, HELP
+    if name == "auto":
+        outreach.set_auto(bool(action.get("on")))
+        return False, ("▶️ Auto-send is ON: " + outreach.auto_window() + ". I'll message you after every batch."
+                       if action.get("on") else "⏸ Auto-send is PAUSED. You can still say “send 10”. Say “resume auto” to restart.")
+    if name == "auto_status":
+        s = get_settings()
+        return False, (f"🤖 Auto-send is {'ON' if outreach.auto_enabled() else 'PAUSED'}: {outreach.auto_window()}.\n"
+                       f"Today: {outreach.sent_today()} of {s.daily_email_cap} emails sent; follow-ups due now: {len(outreach.due_follow_ups(100))}."
+                       + ("\nA batch is sending right now." if outreach.busy() else ""))
+    if name == "report":
+        task = asyncio.create_task(report.send_daily())
+        _tasks.add(task)
+        task.add_done_callback(_tasks.discard)
+        return True, "📊 Putting today's report together…"
     if name == "list_leads":
         status = action.get("status") if action.get("status") in STATUS_WORDS else "new"
         area = leads.find_area(action["area"]) if action.get("area") else None
@@ -271,6 +300,21 @@ def run_action(action: dict) -> tuple[bool, str]:
 async def _check_replies() -> None:
     n = await inbox.check()
     await telegram.send("No new replies." if n == 0 else f"Done: {n} new replies (details above).")
+
+
+async def on_telegram_message(msg: dict) -> None:
+    """Text goes straight to Jarvis; a voice note is transcribed first."""
+    if msg.get("text"):
+        return await on_telegram(msg["text"])
+    try:
+        await telegram.typing()
+        audio = await telegram.download(msg["voice"]["file_id"])
+        text = await voice.hear(audio, msg["voice"].get("mime_type", "audio/ogg"))
+    except Exception:
+        log.exception("Voice message failed")
+        return await telegram.send("Sorry, I couldn't hear that voice note. Try again, or type it.")
+    await telegram.send(f"🎙 You said: “{text}”")
+    await on_telegram(text)
 
 
 async def on_telegram(text: str) -> None:

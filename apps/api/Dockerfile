@@ -8,6 +8,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# ffmpeg turns Jarvis's spoken report into a Telegram voice note (OGG/Opus)
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+
 # dependencies first, so code changes don't reinstall them
 COPY requirements.txt .
 RUN pip install -r requirements.txt

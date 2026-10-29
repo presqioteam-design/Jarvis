@@ -3,7 +3,8 @@ main = "src/index.ts"
 compatibility_date = "2024-10-22"
 
 # Cron Triggers run in UTC. IST = UTC+5:30, Monday–Saturday.
-#   every 30 min 04:00–14:30 UTC = 9:30 AM–8 PM IST → check replies (also keeps Render awake)
+#   every 30 min 04:00–14:30 UTC = 9:30 AM–8 PM IST → /jobs/tick: an automatic email batch between
+#     AUTO_SEND_FROM and AUTO_SEND_UNTIL (default 10 AM–2 PM), otherwise a reply check. Keeps Render awake.
 #   13:30 UTC = 19:00 IST → daily report on Telegram
 # Keep these strings identical to the JOBS map in src/index.ts.
 [triggers]

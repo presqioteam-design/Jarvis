@@ -74,7 +74,7 @@ Run a job by hand: `curl -X POST localhost:8000/jobs/check-replies -H "X-Cron-Se
 |---|---|---|
 | Backend `apps/api` | Render free plan (Docker) | Sleeps after 15 min idle; Telegram and the cron worker wake it |
 | Dashboard `apps/frontend` | Cloudflare Pages | Static site |
-| Scheduled jobs `apps/cron` | Cloudflare Workers | Checks replies every 30 min (9:30 AM–8 PM IST), daily report at 7 PM |
+| Scheduled jobs `apps/cron` | Cloudflare Workers | Every 30 min (9:30 AM–8 PM IST): an automatic email batch in sending hours (5 per run, 10 AM–2 PM, up to 40 a day), otherwise a reply check. Daily report with a voice note at 7 PM |
 
 ### 1. GitHub
 ```bash

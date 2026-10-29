@@ -105,7 +105,66 @@ async def run(targets: list[dict], step: int | None) -> None:
     """step=0 for first emails; None means each lead's next follow-up."""
     async with keepalive.awake():
         sent, failed = await _send_all(targets, step)
-    await _report(sent, failed, step)
+    kind = "first emails" if step == 0 else "follow-ups"
+    await _report([(f"✅ Sent {len(sent)} {kind}:", sent)], failed)
+
+
+# ── automatic sending ────────────────────────────────────────────────────────
+
+def auto_enabled() -> bool:
+    snap = col("settings").document("main").get()
+    return (snap.to_dict() or {}).get("autoSend", True) if snap.exists else True
+
+
+def set_auto(on: bool) -> None:
+    col("settings").document("main").set({"autoSend": on}, merge=True)
+
+
+def auto_window() -> str:
+    s = get_settings()
+    return f"{s.auto_send_per_run} every 30 min, {s.auto_send_from}–{s.auto_send_until} Mon–Sat, up to {s.auto_daily_cap} a day"
+
+
+def auto_send() -> str:
+    """Called by the cron every 30 min. Starts a batch, or says why not."""
+    s = get_settings()
+    now = now_local()
+    if not auto_enabled():
+        return "paused"
+    if now.weekday() == 6 or not (s.auto_send_from <= now.strftime("%H:%M") <= s.auto_send_until):
+        return "outside sending hours"
+    if busy():
+        return "a batch is already sending"
+    room = min(s.auto_daily_cap, s.daily_email_cap) - sent_today()
+    if room <= 0:
+        return "daily limit reached"
+    return "started" if start(_auto_batch(room)) else "a batch is already sending"
+
+
+async def _auto_batch(room: int) -> None:
+    per_run = get_settings().auto_send_per_run
+    await inbox.check()   # replies first: never email someone who just answered
+    follow = due_follow_ups(min(per_run, room))
+    for t in follow:
+        t["to"] = t["emailedTo"]
+    first = pick_first_emails(min(per_run, room - len(follow)), None) if room > len(follow) else []
+    if not follow and not first:
+        await _nothing_left_once_a_day()
+        return
+    async with keepalive.awake():
+        sent_f, failed_f = await _send_all(follow, None)
+        sent_n, failed_n = await _send_all(first, 0)
+    stamp = now_local().strftime("%I:%M %p").lstrip("0")
+    await _report([(f"🤖 Auto batch, {stamp}", []), (f"New ({len(sent_n)}):", sent_n), (f"Follow-ups ({len(sent_f)}):", sent_f)], failed_f + failed_n)
+
+
+async def _nothing_left_once_a_day() -> None:
+    ref = col("settings").document("main")
+    today = now_local().date().isoformat()
+    if ((ref.get().to_dict() or {}).get("emptyNoticeOn")) != today:
+        ref.set({"emptyNoticeOn": today}, merge=True)
+        await telegram.send("🤖 Auto-send: no hotels with an email are left to contact, and no follow-ups are due. "
+                            "Scan another area to find more.")
 
 
 async def _send_all(targets: list[dict], step: int | None) -> tuple[list[dict], list[str]]:
@@ -134,12 +193,16 @@ async def _send_all(targets: list[dict], step: int | None) -> tuple[list[dict], 
     return sent, failed
 
 
-async def _report(sent: list[dict], failed: list[str], step: int | None) -> None:
-    if sent:
-        leads.recompute_area_of([l["id"] for l in sent])
-    kind = "first emails" if step == 0 else "follow-ups"
-    lines = [f"✅ Sent {len(sent)} {kind}:"]
-    lines += [f"{i}. {l['name']} ({l.get('area') or '?'}): {l['to']}" for i, l in enumerate(sent, 1)]
+async def _report(groups: list[tuple[str, list[dict]]], failed: list[str]) -> None:
+    """groups: (heading, leads sent) pairs. The first heading always shows; later empty groups are skipped."""
+    everyone = [l for _, g in groups for l in g]
+    if everyone:
+        leads.recompute_area_of([l["id"] for l in everyone])
+    lines = []
+    for i, (heading, sent) in enumerate(groups):
+        if sent or i == 0:
+            lines.append(heading)
+            lines += [f"{i}. {l['name']} ({l.get('area') or '?'}): {l['to']}" for i, l in enumerate(sent, 1)]
     if failed:
         lines += ["", f"❌ {len(failed)} failed:"] + failed
     lines += ["", f"Today: {sent_today()} of {get_settings().daily_email_cap} emails used."]

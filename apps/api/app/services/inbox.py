@@ -153,7 +153,7 @@ async def replied(lead: dict, m: dict) -> None:
 async def bounced(lead: dict, m: dict) -> None:
     now = now_utc().isoformat()
     col("messages").add({"leadId": lead["id"], "direction": "in", "from": m["from"], "subject": m["subject"],
-                         "body": m["body"][:500], "messageId": m["messageId"], "kind": "other", "at": now})
+                         "body": m["body"][:500], "messageId": m["messageId"], "kind": "bounce", "at": now})
     col("leads").document(lead["id"]).update({"status": "bounced", "nextActionAt": None, "updatedAt": now})
     activity.log("status_change", f"Email to {lead['name']} bounced ({lead['emailedTo']})", lead["id"])
 
