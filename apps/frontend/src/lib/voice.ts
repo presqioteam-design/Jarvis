@@ -64,6 +64,7 @@ export class VoiceCall {
   private outGain?: GainNode;
   private nextTime = 0;
   private playing = new Set<AudioBufferSourceNode>();
+  private lastAudioAt = 0;
   private you = "";
   private jarvis = "";
   private muted = false;
@@ -175,9 +176,14 @@ export class VoiceCall {
       return;
     }
     if (m.toolCall) {
+      const calls = m.toolCall.functionCalls ?? [];
+      if (calls.some((fc: { name?: string }) => fc.name === "end_call")) {
+        this.hangUpAfterGoodbye();
+        return;
+      }
       this.set("thinking");
       const responses = [];
-      for (const fc of m.toolCall.functionCalls ?? []) {
+      for (const fc of calls) {
         let result: string;
         try {
           result = (await voiceCommand(String(fc.args?.command ?? ""))).result;
@@ -214,6 +220,19 @@ export class VoiceCall {
     }
   }
 
+  /** Jarvis asked to hang up: let the goodbye finish playing (quiet for a moment), then end the call. */
+  private hangUpAfterGoodbye() {
+    const started = Date.now();
+    const check = window.setInterval(() => {
+      const quiet = !this.playing.size && Date.now() - this.lastAudioAt > 1200;
+      if (quiet || Date.now() - started > 8000) {
+        clearInterval(check);
+        this.stop();
+      }
+    }, 250);
+    this.timers.push(check);
+  }
+
   /** A text nudge to Jarvis (not shown or spoken as yours). */
   private say(text: string) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ realtimeInput: { text } }));
@@ -233,6 +252,7 @@ export class VoiceCall {
     src.start(this.nextTime);
     this.nextTime += buffer.duration;
     this.playing.add(src);
+    this.lastAudioAt = Date.now();
     this.set("speaking");
     src.onended = () => {
       this.playing.delete(src);

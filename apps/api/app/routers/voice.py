@@ -40,6 +40,8 @@ if something isn't there, say you don't have it. When the admin asks you to DO s
   explore status | pause explore | resume explore | explore <city> next
 For a question about something that changed during the call (like "did anyone reply?"), you may also use the tool with
 the question itself. Never send more than 50 emails. If they ask you to send without a number, ask how many.
+ENDING THE CALL: when the admin wants to stop talking ("cut the call", "hang up", "end the call", "bye", "that's all",
+"stop the call"), say one short goodbye like "Okay, talk soon." and then call the tool `end_call`. Don't ask to confirm.
 
 PRODUCT FACTS (only these):
 {facts}
@@ -54,6 +56,9 @@ TOOL = {
         "description": "Run a Jarvis command (send emails, pause/resume auto-send, reports, leads) or ask about live data.",
         "parameters": {"type": "OBJECT", "properties": {"command": {"type": "STRING", "description": "e.g. 'send 5 in Hitech City'"}},
                        "required": ["command"]},
+    }, {
+        "name": "end_call",
+        "description": "Hang up this call, after saying a short goodbye. Use when the admin asks to cut, end or stop the call.",
     }]
 }
 
