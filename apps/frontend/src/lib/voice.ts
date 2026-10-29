@@ -172,7 +172,7 @@ export class VoiceCall {
     if (m.setupComplete) {
       this.set("listening");
       // greet first, so it feels like Jarvis picked up
-      this.say("The admin just opened the call. Greet them in English in a few words, like a quick hello, then wait.");
+      this.say("The admin just opened the call. Greet them in English in a few words, calling them Boss (like \"Hello Boss, how can I help?\"), then wait.");
       return;
     }
     if (m.toolCall) {
