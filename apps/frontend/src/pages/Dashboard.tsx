@@ -86,10 +86,16 @@ export default function Dashboard() {
             {greeting()}, {user.displayName?.split(" ")[0] ?? "there"}
           </h1>
         </div>
-        <Link to="/chat" className="btn primary">
-          <Icon name="chat" size={18} />
-          Ask Jarvis
-        </Link>
+        <div className="head-actions">
+          <Link to="/chat" className="btn">
+            <Icon name="chat" size={18} />
+            Ask Jarvis
+          </Link>
+          <Link to="/voice" className="btn talk-btn">
+            <Icon name="mic" size={18} />
+            Talk to Jarvis
+          </Link>
+        </div>
       </header>
 
       {error && (

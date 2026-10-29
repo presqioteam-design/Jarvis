@@ -98,6 +98,11 @@ code { font: 13px "JetBrains Mono", monospace; background: rgba(255,255,255,0.06
 .page { max-width: 1120px; display: flex; flex-direction: column; gap: 20px; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 4px; }
 .title { font-size: 32px; }
+.head-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+/* the voice call button wears the orb's amber glow */
+.btn.talk-btn { border-color: #ff9a2e; color: #ffe0b5; background: rgba(255,140,30,.12); font-weight: 600;
+  box-shadow: 0 0 18px rgba(255,130,20,.25), inset 0 0 12px rgba(255,130,20,.12); }
+.btn.talk-btn:hover { background: rgba(255,140,30,.2); box-shadow: 0 0 28px rgba(255,130,20,.4), inset 0 0 14px rgba(255,130,20,.2); }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 24px; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; align-items: start; }
