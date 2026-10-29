@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .routers import campaigns, chat, jobs, telegram, voice
-from .services import chat as chat_service, inbox, telegram as telegram_service
+from .services import chat as chat_service, inbox, leads, telegram as telegram_service
 
 logging.basicConfig(level=logging.INFO)
 # httpx logs full request URLs, and Telegram URLs contain the bot token
@@ -19,6 +19,10 @@ async def lifespan(_app: FastAPI):
     # locally there's no public URL for a webhook, so listen to Telegram by polling
     s = get_settings()
     tasks = [asyncio.create_task(inbox.watch())]   # runs while awake; the cron worker covers sleep
+    # a deploy or restart kills running scans; their progress is saved, so carry on
+    for campaign_id in leads.interrupted():
+        logging.info("Resuming interrupted scan %s", campaign_id)
+        tasks.append(asyncio.create_task(leads.run_campaign(campaign_id)))
     if telegram_service.enabled():
         if s.telegram_mode == "webhook" and s.render_external_url and s.telegram_webhook_secret:
             await telegram_service.set_webhook()

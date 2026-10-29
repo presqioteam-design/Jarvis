@@ -484,5 +484,10 @@ def block(lead_id: str) -> None:
     activity.log("status_change", f"Blocked {lead.get('name', lead_id)}: will never be contacted.", lead_id)
 
 
+def interrupted() -> list[str]:
+    """Scans left "searching" by a restart (every deploy restarts Render and kills running tasks)."""
+    return [d.id for d in col("campaigns").where(filter=FieldFilter("status", "==", "searching")).select(["status"]).stream()]
+
+
 def mark_searching(campaign_id: str) -> None:
     col("campaigns").document(campaign_id).update({"status": "searching", "error": None})
