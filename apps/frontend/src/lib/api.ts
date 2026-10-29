@@ -8,9 +8,12 @@ export class ApiError extends Error {
   }
 }
 
-/** The API's own explanation for refusals (e.g. the daily scan limit), else `fallback`. */
+/**
+ * The API's own explanation for refusals (e.g. the daily scan limit, or 503 when the free
+ * database quota is used up), else `fallback`.
+ */
 export const errorText = (e: unknown, fallback: string) =>
-  e instanceof ApiError && e.status !== 401 && e.status < 500 ? e.message : fallback;
+  e instanceof ApiError && e.message && e.status !== 401 && (e.status < 500 || e.status === 503) ? e.message : fallback;
 
 async function call<T>(path: string, body: unknown): Promise<T> {
   const token = await auth.currentUser?.getIdToken();

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import type { ChatMessage } from "@jarvis/shared";
 import { db, userPath } from "../lib/firebase";
-import { sendChat } from "../lib/api";
+import { errorText, sendChat } from "../lib/api";
 import { useUser } from "../lib/auth";
 import Icon, { Logo } from "../components/Icon";
 
@@ -38,8 +38,8 @@ export default function Chat() {
     setText("");
     try {
       await sendChat(message.trim()); // the API saves both messages; the listener shows them
-    } catch {
-      setError("Jarvis didn't answer. Make sure the API is running (yarn api:dev), then try again.");
+    } catch (e) {
+      setError(errorText(e, "Jarvis couldn't answer just now. Check your connection and try again in a minute."));
       setText(message);
     } finally {
       setBusy(false);

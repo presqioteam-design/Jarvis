@@ -5,7 +5,7 @@ import {
 } from "firebase/firestore";
 import type { AreaSummary, Campaign, CitySummary, Lead, LeadStatus } from "@jarvis/shared";
 import { db, userPath } from "../lib/firebase";
-import { approveAllWithEmail, blockLead, setLeadStatus } from "../lib/api";
+import { approveAllWithEmail, blockLead, errorText, setLeadStatus } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { areaKey, hostname, slug } from "../lib/format";
 import Icon from "../components/Icon";
@@ -245,8 +245,8 @@ export default function Leads() {
     try {
       await setLeadStatus(ids, status);
       applyLocal(ids, status);
-    } catch {
-      setError("Couldn't update. Make sure the API is running (yarn api:dev).");
+    } catch (e) {
+      setError(errorText(e, "Couldn't update. Check your connection and try again."));
     } finally {
       setWorking(false);
     }
@@ -261,8 +261,8 @@ export default function Leads() {
       const { approved } = await approveAllWithEmail(city, area || null);
       setRows((r) => r.filter((l) => !(l.status === "new" && l.emails.length)));
       alert(`Approved ${approved} hotels${where}.`);
-    } catch {
-      setError("Couldn't approve. Make sure the API is running (yarn api:dev).");
+    } catch (e) {
+      setError(errorText(e, "Couldn't approve. Check your connection and try again."));
     } finally {
       setWorking(false);
     }
@@ -273,8 +273,8 @@ export default function Leads() {
     try {
       await blockLead(l.id);
       applyLocal([l.id], "unsubscribed");
-    } catch {
-      setError("Couldn't block this lead. Make sure the API is running (yarn api:dev).");
+    } catch (e) {
+      setError(errorText(e, "Couldn't block this lead. Check your connection and try again."));
     }
   }
 

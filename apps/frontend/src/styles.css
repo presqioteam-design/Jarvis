@@ -380,10 +380,11 @@ td.strong { color: var(--c-customer); font-weight: 600; }
   .tab-jarvis:active .tab-jarvis-orb { transform: translateX(-50%) scale(.95); }
   .tab-jarvis.active .tab-jarvis-orb { border-color: #4fd8ff; box-shadow: 0 0 0 5px var(--tabbar-bg), 0 0 30px rgba(79,216,255,.6); }
   .tab-jarvis.active { color: #4fd8ff; }
-  .main { padding: 18px 16px calc(84px + env(safe-area-inset-bottom)); }
+  .main { padding: 18px 16px calc(92px + env(safe-area-inset-bottom)); }
   .main.main-voice { padding: 0; }
   .title { font-size: 26px; }
-  .chat { height: calc(100dvh - 56px - 64px - 36px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+  /* app bar 56 + top padding 18 + bottom padding 92 (tab bar and room for the raised Jarvis button) */
+  .chat { height: calc(100dvh - 56px - 18px - 92px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
   .msg { max-width: 88%; }
   .card.panel { height: 380px; }
   /* fills exactly the space between the app bar and the tab bar */
