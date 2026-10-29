@@ -6,6 +6,7 @@ const NAV: { to: string; label: string; icon: IconName; soon?: boolean }[] = [
   { to: "/dashboard", label: "Dashboard", icon: "dashboard" },
   { to: "/campaigns", label: "Find hotels", icon: "campaign" },
   { to: "/leads", label: "Leads", icon: "leads" },
+  { to: "/voice", label: "Talk to Jarvis", icon: "mic" },
   { to: "/chat", label: "Ask Jarvis", icon: "chat" },
   { to: "/settings", label: "Settings", icon: "settings", soon: true },
 ];

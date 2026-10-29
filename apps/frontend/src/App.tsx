@@ -8,6 +8,7 @@ import Dashboard from "./pages/Dashboard";
 import Chat from "./pages/Chat";
 import Campaigns from "./pages/Campaigns";
 import Leads from "./pages/Leads";
+import Voice from "./pages/Voice";
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="/chat" element={<Chat />} />
         <Route path="/campaigns" element={<Campaigns />} />
         <Route path="/leads" element={<Leads />} />
+        <Route path="/voice" element={<Voice />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

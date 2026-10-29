@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routers import campaigns, chat, jobs, telegram
+from .routers import campaigns, chat, jobs, telegram, voice
 from .services import chat as chat_service, inbox, telegram as telegram_service
 
 logging.basicConfig(level=logging.INFO)
@@ -43,6 +43,7 @@ app.include_router(campaigns.router)
 app.include_router(chat.router)
 app.include_router(jobs.router)
 app.include_router(telegram.router)
+app.include_router(voice.router)
 
 
 @app.get("/health")

@@ -115,7 +115,7 @@ export interface Activity {
 export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
-  channel: "web" | "telegram";
+  channel: "web" | "telegram" | "voice";
   createdAt: string;
 }
 

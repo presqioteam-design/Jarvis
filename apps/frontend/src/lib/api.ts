@@ -33,6 +33,8 @@ async function call<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export const startVoiceSession = () => call<{ url: string }>("/voice/session", {});
+export const voiceCommand = (command: string) => call<{ result: string }>("/voice/command", { command });
 export const sendChat = (message: string) => call<{ reply: string }>("/chat", { message });
 export const blockLead = (leadId: string) => call<{ ok: true }>(`/leads/${leadId}/block`, {});
 export const scanPlace = (place: string, radiusKm: number | null) => call<{ id: string }>("/campaigns", { place, radiusKm });
