@@ -143,7 +143,7 @@ export default function Voice() {
       <p className="voice-foot">
         Works best with headphones.{" "}
         {allowance
-          ? `${allowance.callsLeft === null ? "" : `${allowance.callsLeft} of ${allowance.callsPerDay} calls left today · `}up to ${Math.round(allowance.maxSeconds / 60)} min each.`
+          ? `${allowance.callsLeft === null ? "Up to" : `${allowance.callsLeft} of ${allowance.callsPerDay} calls left today · up to`} ${Math.round(allowance.maxSeconds / 60)} min each.`
           : "Daily limits keep calls within the free voice allowance."}
       </p>
     </div>

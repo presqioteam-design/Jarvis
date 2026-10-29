@@ -93,6 +93,9 @@ code { font: 13px "JetBrains Mono", monospace; background: rgba(255,255,255,0.06
 .profile-text { min-width: 0; flex: 1; }
 .profile-name { font-weight: 600; font-size: 14px; }
 .main { min-width: 0; padding: 36px 44px 56px; }
+.main.main-voice { padding: 0; }
+/* phone app chrome: top app bar and bottom tab bar (shown under 800px) */
+.appbar, .tabbar { display: none; }
 
 /* ── page ─────────────────────────────────────────── */
 .page { max-width: 1120px; display: flex; flex-direction: column; gap: 20px; }
@@ -274,7 +277,7 @@ td.strong { color: var(--c-customer); font-weight: 600; }
 /* ── talk to jarvis ────────────────────────────────── */
 /* arc-reactor HUD: reactor cyan for the interface, warm gold only for Jarvis's voice */
 .voice-page { --hud: #4fd8ff; --hud-dim: rgba(79,216,255,.28); --hud-faint: rgba(79,216,255,.08); --gold: #ffb84d;
-  position: relative; height: 100vh; margin: -36px -44px -56px;
+  position: relative; height: 100vh; margin: 0;
   padding: 72px 24px 28px; justify-content: space-between; display: flex; flex-direction: column; align-items: center; overflow: hidden;
   color: #cdefff; font-family: "JetBrains Mono", monospace;
   background:
@@ -350,25 +353,49 @@ td.strong { color: var(--c-customer); font-weight: 600; }
   .login-panel { padding: 24px 16px 40px; }
 }
 @media (max-width: 800px) {
-  .shell { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-  .sidebar { position: sticky; z-index: 10; height: auto; flex-direction: row; align-items: center; gap: 8px; padding: 10px 16px; border-right: 0; border-bottom: 1px solid var(--border); }
-  .brand { padding: 0; }
-  .sidebar .brand-sub, .profile-text, .navlink span, .soon { display: none; }
-  .nav { flex-direction: row; margin-left: auto; }
-  .navlink { padding: 0 10px; }
-  .navlink.disabled { display: none; }
-  .profile { margin: 0; padding: 0; border: 0; }
-  .avatar { width: 30px; height: 30px; }
-  .main { padding: 20px 16px 40px; }
+  .shell { display: block; }
+  .sidebar { display: none; }
+  .appbar { display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 20;
+    height: 56px; padding: env(safe-area-inset-top) 10px 0 14px; box-sizing: content-box;
+    background: rgba(8,11,16,.9); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--border); }
+  .appbar-title { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.15; }
+  .appbar-brand { font: 700 15px "Space Grotesk", sans-serif; letter-spacing: .18em; }
+  .appbar-page { font-size: 12px; color: var(--muted); }
+  .appbar .avatar { width: 30px; height: 30px; }
+  .appbar.on-voice { background: rgba(3,11,21,.92); border-bottom-color: rgba(79,216,255,.16); }
+  .tabbar { --tabbar-bg: #0b0f15; display: grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    height: 64px; padding-bottom: env(safe-area-inset-bottom); box-sizing: content-box;
+    background: var(--tabbar-bg); border-top: 1px solid var(--border); }
+  .tabbar.on-voice { --tabbar-bg: #030b15; border-top-color: rgba(79,216,255,.16); }
+  .tabbar-item { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 0;
+    font-size: 11px; font-weight: 500; color: var(--muted); -webkit-tap-highlight-color: transparent; }
+  .tabbar-item .icon { box-sizing: content-box; padding: 3px 14px; border-radius: 999px; transition: background .15s; }
+  .tabbar-item.active { color: var(--accent); font-weight: 600; }
+  .tabbar-item.active .icon { background: var(--accent-soft); }
+  /* Jarvis: the raised main button in the middle */
+  .tab-jarvis { position: relative; justify-content: flex-end; padding-bottom: 8px; }
+  .tab-jarvis-orb { position: absolute; top: -22px; left: 50%; transform: translateX(-50%); width: 60px; height: 60px; border-radius: 50%;
+    display: grid; place-items: center; background: radial-gradient(circle at 50% 45%, #0b3350, #030b15 72%);
+    border: 1px solid rgba(79,216,255,.5); box-shadow: 0 0 0 5px var(--tabbar-bg), 0 0 20px rgba(79,216,255,.3); transition: box-shadow .2s, transform .1s; }
+  .tab-jarvis:active .tab-jarvis-orb { transform: translateX(-50%) scale(.95); }
+  .tab-jarvis.active .tab-jarvis-orb { border-color: #4fd8ff; box-shadow: 0 0 0 5px var(--tabbar-bg), 0 0 30px rgba(79,216,255,.6); }
+  .tab-jarvis.active { color: #4fd8ff; }
+  .main { padding: 18px 16px calc(84px + env(safe-area-inset-bottom)); }
+  .main.main-voice { padding: 0; }
   .title { font-size: 26px; }
-  .chat { height: calc(100dvh - 124px); }
+  .chat { height: calc(100dvh - 56px - 64px - 36px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
   .msg { max-width: 88%; }
   .card.panel { height: 380px; }
-  .voice-page { margin: -20px -16px -40px; padding: 64px 16px 20px; height: calc(100dvh - 64px); }
-  .orb-wrap { width: min(92vw, 44dvh); }
+  /* fills exactly the space between the app bar and the tab bar */
+  .voice-page { padding: 52px 16px 34px; height: calc(100dvh - 56px - 64px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+  .hud { top: 14px; }
+  .hud-corner.tl, .hud-corner.tr { top: 46px; }
+  /* whatever height is left after the bars, status, captions and button goes to the orb */
+  .orb-wrap { width: min(88vw, max(190px, calc(100dvh - 430px))); }
+  .cap-hint { font-size: 13px; }
+  .captions { min-height: 64px; }
   .hud { left: 16px; right: 16px; }
   .hud-sub, .hud-rail, .hud-panel { display: none; }
-  .hud-corner.tl, .hud-corner.tr { top: 56px; }
   .hud-corner.tl, .hud-corner.bl { left: 12px; }
   .hud-corner.tr, .hud-corner.br { right: 12px; }
   .hud-corner.bl, .hud-corner.br { display: none; }
@@ -386,12 +413,5 @@ td.strong { color: var(--c-customer); font-weight: 600; }
   .search-box { width: 100%; min-width: 0; }
 }
 @media (max-width: 420px) {
-  .sidebar .brand-name { display: none; }
-  /* small phones: the top bar must fit the logo, 5 menu icons and sign-out */
-  .sidebar { gap: 4px; padding: 10px 10px; }
-  .nav { gap: 0; }
-  .navlink { padding: 0 8px; min-height: 40px; }
-  .profile .avatar { display: none; }
   .main { padding-left: 14px; padding-right: 14px; }
-  .voice-page { margin-left: -14px; margin-right: -14px; }
 }
