@@ -69,6 +69,13 @@ export class VoiceCall {
   private muted = false;
   private buf = new Uint8Array(new ArrayBuffer(512));
   private timers: number[] = [];
+  // Kept as fields on purpose: if nothing references the mic nodes, the browser's garbage
+  // collector can remove them mid-call and your voice silently stops reaching Jarvis.
+  private micSrc?: MediaStreamAudioSourceNode;
+  private micNode?: AudioWorkletNode;
+  private micSink?: GainNode;
+  private lastChunk = 0;
+  private workletUrl = URL.createObjectURL(new Blob([MIC_WORKLET], { type: "text/javascript" }));
 
   constructor(private on: Events) {}
 
@@ -86,20 +93,12 @@ export class VoiceCall {
     this.outGain.connect(this.outAn).connect(this.outCtx.destination);
 
     // set up audio and ask the server for the call at the same time
-    this.micCtx = new AudioContext();
     const session = startVoiceSession();
     session.catch(() => undefined); // handled below; avoids an unhandled-rejection warning meanwhile
-    await this.micCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([MIC_WORKLET], { type: "text/javascript" })));
-    const src = this.micCtx.createMediaStreamSource(this.stream);
-    this.micAn = this.micCtx.createAnalyser();
-    const node = new AudioWorkletNode(this.micCtx, "mic-16k");
-    src.connect(this.micAn);
-    src.connect(node);
-    node.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
-      if (this.ws?.readyState === WebSocket.OPEN && !this.muted && this.state !== "connecting") {
-        this.ws.send(JSON.stringify({ realtimeInput: { audio: { data: toBase64(e.data), mimeType: "audio/pcm;rate=16000" } } }));
-      }
-    };
+    await this.startMic();
+    // watchdog: if the mic stops delivering audio (the tab was backgrounded, the browser paused audio,
+    // or a device changed), rebuild it instead of leaving a call where Jarvis can't hear you
+    this.timers.push(window.setInterval(() => this.checkMic(), 1500));
 
     let url: string;
     try {
@@ -122,6 +121,49 @@ export class VoiceCall {
         e.code === 1000 ? this.stop() : this.fail(e.reason ? `Call dropped: ${e.reason}` : "The call dropped. Tap to call again.");
       }
     };
+  }
+
+  private async startMic() {
+    if (!this.stream || this.stream.getAudioTracks().every((t) => t.readyState === "ended")) {
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    }
+    this.micCtx = new AudioContext();
+    await this.micCtx.audioWorklet.addModule(this.workletUrl);
+    this.micSrc = this.micCtx.createMediaStreamSource(this.stream);
+    this.micAn = this.micCtx.createAnalyser();
+    this.micNode = new AudioWorkletNode(this.micCtx, "mic-16k");
+    // a silent path to the speakers keeps Chrome processing the worklet for the whole call
+    this.micSink = this.micCtx.createGain();
+    this.micSink.gain.value = 0;
+    this.micSrc.connect(this.micAn);
+    this.micSrc.connect(this.micNode).connect(this.micSink).connect(this.micCtx.destination);
+    this.lastChunk = performance.now();
+    this.micNode.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
+      this.lastChunk = performance.now();
+      if (this.ws?.readyState === WebSocket.OPEN && !this.muted && this.state !== "connecting") {
+        this.ws.send(JSON.stringify({ realtimeInput: { audio: { data: toBase64(e.data), mimeType: "audio/pcm;rate=16000" } } }));
+      }
+    };
+  }
+
+  private restarting = false;
+
+  private async checkMic() {
+    if (this.restarting || this.state === "ended" || this.state === "error" || !this.micCtx) return;
+    if (this.micCtx.state === "suspended") await this.micCtx.resume().catch(() => undefined);
+    if (this.outCtx?.state === "suspended") await this.outCtx.resume().catch(() => undefined);
+    if (performance.now() - this.lastChunk < 3000) return;
+    this.restarting = true;   // no audio for 3 s: rebuild the mic chain
+    try {
+      this.micSrc?.disconnect();
+      this.micNode?.disconnect();
+      await this.micCtx.close().catch(() => undefined);
+      await this.startMic();
+    } catch {
+      this.fail("The microphone stopped. Check that it's connected and allowed, then call again.");
+    } finally {
+      this.restarting = false;
+    }
   }
 
   private async handle(raw: string | Blob) {
@@ -147,7 +189,10 @@ export class VoiceCall {
       this.ws?.send(JSON.stringify({ toolResponse: { functionResponses: responses } }));
       return;
     }
-    if (m.goAway) return; // the server will close; onclose ends the call
+    if (m.goAway) {
+      this.on.caption("jarvis", "The voice service is ending this call shortly. Tap “Call again” if you need more.");
+      return;
+    }
     const sc = m.serverContent;
     if (!sc) return;
     if (sc.interrupted) this.flush(); // you spoke over Jarvis: stop talking at once
@@ -211,8 +256,10 @@ export class VoiceCall {
   }
 
   stop() {
-    this.timers.forEach(clearTimeout);
+    this.timers.forEach((t) => { clearTimeout(t); clearInterval(t); });
     this.timers = [];
+    this.micSrc?.disconnect();
+    this.micNode?.disconnect();
     this.flush();
     this.ws?.close(1000);
     this.stream?.getTracks().forEach((t) => t.stop());

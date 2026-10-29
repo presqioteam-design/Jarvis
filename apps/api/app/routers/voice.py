@@ -79,6 +79,9 @@ async def session():
         "systemInstruction": {"parts": [{"text": INSTRUCTIONS.format(
             facts=presqio.FACTS, now=now_local().strftime("%A %d %b, %I:%M %p"), data=chat.context_block())}]},
         "tools": [TOOL],
+        # end your turn after a short pause even with background noise, so Jarvis doesn't keep waiting
+        "realtimeInputConfig": {"automaticActivityDetection": {
+            "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH", "silenceDurationMs": 700}},
         "inputAudioTranscription": {},
         "outputAudioTranscription": {},
     }
