@@ -386,6 +386,7 @@ td.strong { color: var(--c-customer); font-weight: 600; }
   /* app bar 56 + top padding 18 + bottom padding 100 (tab bar and room for the raised Jarvis button) */
   .chat { height: calc(100dvh - 56px - 18px - 100px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
   .chat-head { display: none; } /* the app bar already says "Ask Jarvis" */
+  .head-actions { display: none; } /* Ask / Talk to Jarvis live in the tab bar on phones */
   .msg { max-width: 88%; }
   .card.panel { height: 380px; }
   /* fills exactly the space between the app bar and the tab bar */
