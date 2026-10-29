@@ -11,7 +11,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from ..config import get_settings
 from ..firebase import col
 from ..timeutil import now_local
-from . import leads, outreach, telegram, voice
+from . import leads, outreach, telegram, usage, voice
 
 
 def count(q) -> int:
@@ -67,6 +67,7 @@ def written(r: dict) -> str:
     ]
     if r["hot"]:
         lines += ["", "🔥 Interested: " + ", ".join(r["hot"])]
+    lines += ["", f"📈 Gemini today: {usage.summary()}"]
     if r["left"] == 0:
         lines += ["", "⚠️ No hotels with an email are left. Scan another area to find more."]
     return "\n".join(lines)

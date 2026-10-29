@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from ..deps import require_user
-from ..services import chat
+from ..services import chat, usage
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -17,5 +17,8 @@ class ChatOut(BaseModel):
 
 @router.post("", response_model=ChatOut)
 async def post_chat(body: ChatIn, _uid: str = Depends(require_user)) -> ChatOut:
-    reply, _ = await chat.handle(body.message, channel="web")
+    try:
+        reply, _ = await chat.handle(body.message, channel="web")
+    except usage.LimitReached as e:
+        reply = f"⚠️ {e}"
     return ChatOut(reply=reply)

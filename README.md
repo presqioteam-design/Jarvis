@@ -124,6 +124,9 @@ Render's free plan blocks SMTP, so the deployed API sends and reads mail through
 Without the `GMAIL_*` values the API falls back to SMTP/IMAP with the App Password, which works on your own computer.
 
 ### Free-tier limits to keep in mind
+- Gemini (free key): Jarvis caps its own use per day so it never runs into Google's limits. Change these in Render → Environment:
+  `VOICE_CALLS_PER_DAY` (10), `VOICE_MINUTES_PER_CALL` (10), `AI_REQUESTS_PER_DAY` (500: chat, sorting replies, voice-note transcripts),
+  `TTS_PER_DAY` (10: spoken reports). Say `usage` on Telegram to see today's numbers; they reset at midnight IST.
 - Firestore Spark: 50k reads and 20k writes a day. A whole-city scan uses a lot of both; scan at most one city a day.
 - Gmail: stay within `DAILY_EMAIL_CAP` (50).
 - TomTom: about 2,500 searches a day; the Hyderabad scan used ~460.

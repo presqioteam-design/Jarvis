@@ -15,7 +15,7 @@ from google.api_core.exceptions import ResourceExhausted
 from ..config import get_settings
 from ..firebase import col
 from ..timeutil import now_local, now_utc
-from . import activity, inbox, leads, llm, outreach, presqio, report, telegram, voice
+from . import activity, inbox, leads, llm, outreach, presqio, report, telegram, usage, voice
 
 log = logging.getLogger(__name__)
 _tasks: set[asyncio.Task] = set()   # keep background scans alive
@@ -87,7 +87,8 @@ def context_block() -> str:
         f"PIPELINE (all areas): {pipeline}\n"
         f"EMAILS TODAY: {outreach.sent_today()} of {s.daily_email_cap} daily limit; "
         f"follow-ups due now: {len(outreach.due_follow_ups(100))}; sending right now: {'yes' if outreach.busy() else 'no'}\n"
-        f"AUTO-SEND: {'on' if outreach.auto_enabled() else 'paused'} ({outreach.auto_window()})\n\n"
+        f"AUTO-SEND: {'on' if outreach.auto_enabled() else 'paused'} ({outreach.auto_window()})\n"
+        f"GEMINI USAGE TODAY: {usage.summary()}\n\n"
         f"MOST EMAILS (sorted): {most_email}\n\n"
         f"AREAS (biggest first):\n{area_lines}\n\n"
         f"NEEDS ATTENTION:\n{hot_lines}\n\n"
@@ -165,6 +166,7 @@ HELP = """Here's what you can tell me:
 • what does Presqio cost? (I'll say: call us)
 
 📊 report — today's numbers now (also sent at 7 PM, with a voice note)
+📈 usage — today's AI and voice usage against the daily limits
 🎙 You can send me voice notes too.
 
 I'll message you by myself when a hotel replies, after every batch, and at 7 PM with the daily report."""
@@ -176,6 +178,7 @@ COMMANDS = [
     (re.compile(r"^(resume|start)\s+auto(?:[\s-]?send(?:ing)?)?[.!]*$", re.I), lambda m: {"name": "auto", "on": True}),
     (re.compile(r"^auto(?:[\s-]?send)?\s+status\??$|^status\??$", re.I), lambda m: {"name": "auto_status"}),
     (re.compile(r"^/?(daily\s+)?report[.!?]*$", re.I), lambda m: {"name": "report"}),
+    (re.compile(r"^/?(usage|limits?|quota)[.!?]*$", re.I), lambda m: {"name": "usage"}),
     (re.compile(r"^send\s+(\d+)(?:\s+(?:new\s+)?(?:e-?mails?|mails?))?(?:\s+(?:in|to|from|at)\s+(.+?))?[.!]*$", re.I),
      lambda m: {"name": "send_emails", "count": int(m[1]), "area": m[2]}),
     (re.compile(r"^send\s+follow[\s-]?ups?[.!]*$", re.I), lambda m: {"name": "send_follow_ups"}),
@@ -236,6 +239,8 @@ def run_action(action: dict) -> tuple[bool, str]:
         return outreach.start(outreach.send_follow_ups()), ""
     if name == "help":
         return False, HELP
+    if name == "usage":
+        return False, f"📊 Gemini used today: {usage.summary()}. Limits reset at midnight."
     if name == "auto":
         outreach.set_auto(bool(action.get("on")))
         return False, ("▶️ Auto-send is ON: " + outreach.auto_window() + ". I'll message you after every batch."
@@ -310,6 +315,8 @@ async def on_telegram_message(msg: dict) -> None:
         await telegram.typing()
         audio = await telegram.download(msg["voice"]["file_id"])
         text = await voice.hear(audio, msg["voice"].get("mime_type", "audio/ogg"))
+    except usage.LimitReached as e:
+        return await telegram.send(f"⚠️ {e} Type your message instead.")
     except Exception:
         log.exception("Voice message failed")
         return await telegram.send("Sorry, I couldn't hear that voice note. Try again, or type it.")
@@ -324,6 +331,8 @@ async def on_telegram(text: str) -> None:
         reply, started = await handle(text, "telegram")
     except ResourceExhausted:
         reply, started = QUOTA_MESSAGE, False
+    except usage.LimitReached as e:
+        reply, started = f"⚠️ {e} Commands like “send 10”, “report” and “auto status” still work.", False
     except Exception:
         log.exception("Telegram message failed")
         reply, started = "Sorry, something went wrong answering that. Try again in a minute.", False

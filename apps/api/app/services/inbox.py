@@ -19,7 +19,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from ..config import get_settings
 from ..firebase import col
 from ..timeutil import now_utc
-from . import activity, gmail, leads, llm, telegram
+from . import activity, gmail, leads, llm, telegram, usage
 
 log = logging.getLogger(__name__)
 LOOKBACK_DAYS = 21
@@ -117,7 +117,10 @@ async def check() -> int:
 
 
 async def classify(body: str) -> tuple[str, str]:
-    raw = await llm.complete(CLASSIFY, [{"role": "user", "content": body or "(empty reply)"}], max_tokens=300, json=True)
+    try:
+        raw = await llm.complete(CLASSIFY, [{"role": "user", "content": body or "(empty reply)"}], max_tokens=300, json=True)
+    except usage.LimitReached:
+        return "other", "(not sorted: today's AI limit is used up)"   # still recorded and alerted
     try:
         out = json.loads(raw)
         kind = out.get("kind") if out.get("kind") in KINDS else "other"

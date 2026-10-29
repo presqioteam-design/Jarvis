@@ -13,6 +13,7 @@ import subprocess
 import httpx
 
 from ..config import get_settings
+from . import usage
 
 API = "https://generativelanguage.googleapis.com/v1beta/models"
 TTS_MODEL = "gemini-3.8-flash-tts"
@@ -21,6 +22,7 @@ VOICE = "Kore"
 
 async def speak(text: str) -> tuple[bytes, str]:
     """-> (audio, "ogg" or "wav")."""
+    usage.take("tts")
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(f"{API}/{TTS_MODEL}:generateContent", headers={"x-goog-api-key": get_settings().gemini_api_key}, json={
             "contents": [{"parts": [{"text": text}]}],
@@ -44,6 +46,7 @@ def _to_ogg(wav: bytes) -> bytes:
 
 async def hear(audio: bytes, mime: str = "audio/ogg") -> str:
     """Transcribe a voice note (English, Hindi or Telugu speech; answer in the language spoken)."""
+    usage.take("ai")
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(f"{API}/gemini-3.5-flash-lite:generateContent", headers={"x-goog-api-key": get_settings().gemini_api_key}, json={
             "contents": [{"parts": [

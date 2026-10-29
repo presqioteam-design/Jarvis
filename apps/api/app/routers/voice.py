@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from ..config import get_settings
 from ..deps import require_user
-from ..services import chat, presqio
+from ..services import chat, presqio, usage
 from ..timeutil import now_local
 
 router = APIRouter(prefix="/voice", tags=["voice"], dependencies=[Depends(require_user)])
@@ -62,6 +62,10 @@ def _iso(dt: datetime) -> str:
 async def session():
     """A single-use token for one call, valid to start within 2 minutes."""
     s = get_settings()
+    try:
+        left = usage.take("voiceCalls")
+    except usage.LimitReached as e:
+        raise HTTPException(429, str(e))
     now = datetime.now(timezone.utc)
     setup = {
         "model": f"models/{MODEL}",
@@ -83,7 +87,8 @@ async def session():
                                     "bidiGenerateContentSetup": setup})
     if r.status_code != 200:
         raise HTTPException(502, "Couldn't start a voice session with Gemini. Try again in a minute.")
-    return {"url": f"{WS_URL}?access_token={r.json()['name']}"}
+    return {"url": f"{WS_URL}?access_token={r.json()['name']}", "maxSeconds": s.voice_minutes_per_call * 60,
+            "callsLeft": left, "callsPerDay": s.voice_calls_per_day}
 
 
 class CommandIn(BaseModel):
@@ -97,5 +102,8 @@ async def command(body: CommandIn):
     if action:
         started, note = chat.run_action(action)
         return {"result": note or ("Started. I'll message the details on Telegram." if started else "Done.")}
-    reply, _ = await chat.handle(body.command, channel="voice")
+    try:
+        reply, _ = await chat.handle(body.command, channel="voice")
+    except usage.LimitReached as e:
+        reply = str(e)
     return {"result": reply}

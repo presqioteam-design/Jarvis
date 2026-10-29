@@ -20,6 +20,7 @@ export default function Voice() {
   const [error, setError] = useState("");
   const [muted, setMuted] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  const [allowance, setAllowance] = useState<{ callsLeft: number; callsPerDay: number; maxSeconds: number } | null>(null);
   const call = useRef<VoiceCall | null>(null);
 
   const live = state === "connecting" || state === "listening" || state === "thinking" || state === "speaking";
@@ -42,6 +43,7 @@ export default function Voice() {
       state: setState,
       caption: (who, text) => (who === "you" ? setYou(text) : setJarvis(text)),
       error: setError,
+      info: setAllowance,
     });
     call.current = c;
     await c.start();
@@ -66,7 +68,7 @@ export default function Voice() {
         <span className="hud-sub">PRESQIO · SALES ASSISTANT</span>
         <span className="hud-right">
           {live && <span className="rec" aria-hidden="true" />}
-          {live ? clock : "STANDBY"}
+          {live ? (allowance ? `${clock} / ${String(Math.floor(allowance.maxSeconds / 60)).padStart(2, "0")}:00` : clock) : "STANDBY"}
         </span>
       </div>
       <span className="hud-corner tl" aria-hidden="true" />
@@ -108,7 +110,12 @@ export default function Voice() {
           </button>
         )}
       </div>
-      <p className="voice-foot">Works best with headphones. Calls last up to about 15 minutes.</p>
+      <p className="voice-foot">
+        Works best with headphones.{" "}
+        {allowance
+          ? `${allowance.callsLeft} of ${allowance.callsPerDay} calls left today · up to ${Math.round(allowance.maxSeconds / 60)} min each.`
+          : "Daily limits keep calls within the free voice allowance."}
+      </p>
     </div>
   );
 }

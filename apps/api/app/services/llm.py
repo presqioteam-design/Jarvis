@@ -8,6 +8,7 @@ import asyncio
 import httpx
 
 from ..config import get_settings
+from . import usage
 
 DEFAULT_MODELS = {
     "anthropic": "claude-haiku-5-5",
@@ -19,6 +20,7 @@ Message = dict  # {"role": "user" | "assistant", "content": str}
 
 async def complete(system: str, messages: list[Message], max_tokens: int = 800, json: bool = False) -> str:
     """json=True asks the model for a JSON object (Gemini enforces it; Claude follows the prompt)."""
+    usage.take("ai")   # raises usage.LimitReached when today's cap is used up
     s = get_settings()
     provider = s.llm_provider.lower()
     model = s.llm_model or DEFAULT_MODELS.get(provider, "")

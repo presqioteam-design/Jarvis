@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     auto_send_until: str = "14:00"
     auto_daily_cap: int = 40         # automatic batches stop here; manual "send" can use the rest
 
+    # daily caps on Gemini, kept well under the free allowance (see services/usage.py)
+    voice_calls_per_day: int = 10
+    voice_minutes_per_call: int = 10
+    ai_requests_per_day: int = 500   # chat, sorting replies, transcribing voice notes
+    tts_per_day: int = 10            # spoken replies (the voice note in the daily report)
+
 
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

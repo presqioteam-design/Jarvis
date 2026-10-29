@@ -11,6 +11,8 @@ type Events = {
   state: (s: CallState) => void;
   caption: (who: "you" | "jarvis", text: string) => void;
   error: (message: string) => void;
+  /** Today's allowance, known once the call is set up. */
+  info: (i: { callsLeft: number; callsPerDay: number; maxSeconds: number }) => void;
 };
 
 // Runs on the audio thread: averages the mic down to 16 kHz and sends 40 ms Int16 chunks.
@@ -66,6 +68,7 @@ export class VoiceCall {
   private jarvis = "";
   private muted = false;
   private buf = new Uint8Array(new ArrayBuffer(512));
+  private timers: number[] = [];
 
   constructor(private on: Events) {}
 
@@ -97,7 +100,14 @@ export class VoiceCall {
 
     let url: string;
     try {
-      ({ url } = await startVoiceSession());
+      const s = await startVoiceSession();
+      url = s.url;
+      this.on.info(s);
+      // daily-limit guard: Jarvis wraps up a minute before the end, then the call closes
+      this.timers.push(
+        window.setTimeout(() => this.say("One minute is left in this call. Tell the admin briefly and wrap up soon."), (s.maxSeconds - 60) * 1000),
+        window.setTimeout(() => this.fail(`Calls are limited to ${Math.round(s.maxSeconds / 60)} minutes to stay within the free voice allowance. Call again if you need more.`), s.maxSeconds * 1000),
+      );
     } catch (e) {
       return this.fail(e instanceof Error && e.message ? e.message : "Couldn't reach Jarvis. The server may be waking up; try again in a minute.");
     }
@@ -116,7 +126,7 @@ export class VoiceCall {
     if (m.setupComplete) {
       this.set("listening");
       // greet first, so it feels like Jarvis picked up
-      this.ws?.send(JSON.stringify({ realtimeInput: { text: "The admin just opened the call. Greet them in one short sentence and mention one useful number from today." } }));
+      this.say("The admin just opened the call. Greet them in one short sentence and mention one useful number from today.");
       return;
     }
     if (m.toolCall) {
@@ -156,6 +166,11 @@ export class VoiceCall {
     }
   }
 
+  /** A text nudge to Jarvis (not shown or spoken as yours). */
+  private say(text: string) {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ realtimeInput: { text } }));
+  }
+
   private play(b64: string) {
     const ctx = this.outCtx!;
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -193,6 +208,8 @@ export class VoiceCall {
   }
 
   stop() {
+    this.timers.forEach(clearTimeout);
+    this.timers = [];
     this.flush();
     this.ws?.close(1000);
     this.stream?.getTracks().forEach((t) => t.stop());
