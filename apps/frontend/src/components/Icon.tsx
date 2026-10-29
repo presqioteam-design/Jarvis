@@ -1,3 +1,5 @@
+import { useId } from "react";
+
 /** Small inline icon set (24×24, stroke-based) so we don't need an icon library. */
 const PATHS = {
   dashboard: "M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 9h8V3h-8z",
@@ -32,12 +34,29 @@ export default function Icon({ name, size = 20 }: { name: IconName; size?: numbe
   );
 }
 
+/** The Jarvis arc-reactor mark: segmented outer ring, three brackets and a glowing core. */
 export function Logo({ size = 32 }: { size?: number }) {
+  const core = `jv-core-${useId().replace(/:/g, "")}`;
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="var(--accent)" strokeWidth="2">
-      <circle cx="16" cy="16" r="13" />
-      <circle cx="16" cy="16" r="6" />
-      <path d="M16 3v5M16 24v5M3 16h5M24 16h5" />
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true" className="logo-mark">
+      <defs>
+        <radialGradient id={core} cx="50%" cy="50%" r="50%">
+          <stop offset="0" stopColor="#ffffff" />
+          <stop offset=".38" stopColor="#bdf3ff" />
+          <stop offset=".72" stopColor="#4fd8ff" stopOpacity=".75" />
+          <stop offset="1" stopColor="#4fd8ff" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <g fill="none" stroke="#4fd8ff">
+        <circle cx="32" cy="32" r="27" strokeWidth="3.2" strokeDasharray="10.18 3.96" transform="rotate(-97 32 32)" />
+        <circle cx="32" cy="32" r="21.5" strokeWidth="1.1" strokeOpacity=".55" />
+        <path
+          d="M36.79 17.26A15.5 15.5 0 0 1 47.16 35.22 M42.37 43.52A15.5 15.5 0 0 1 21.63 43.52 M16.84 35.22A15.5 15.5 0 0 1 27.21 17.26"
+          strokeWidth="3.6"
+        />
+      </g>
+      <circle cx="32" cy="32" r="10.5" fill={`url(#${core})`} />
+      <circle cx="32" cy="32" r="3.6" fill="#ffffff" />
     </svg>
   );
 }
