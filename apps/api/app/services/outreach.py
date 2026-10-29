@@ -116,9 +116,15 @@ async def _send_all(targets: list[dict], step: int | None) -> tuple[list[dict], 
         try:
             msg_id, thread_id = await mailer.send(lead["to"], email.subject, email.body,
                                                   lead.get("lastMessageId") if n else None, lead.get("threadId") if n else None)
+        except mailer.MailSetupError as e:
+            failed.append(f"Stopped before sending anything: {e}")
+            break
         except Exception as e:
             log.exception("Send to %s failed", lead["to"])
-            failed.append(f"{lead['name']} ({lead['to']}): {type(e).__name__}")
+            failed.append(f"{lead['name']} ({lead['to']}): {type(e).__name__}: {str(e)[:120]}")
+            if len(failed) >= 2 and not sent:
+                failed.append("Stopped after 2 failures in a row; the rest weren't tried.")
+                break
             continue
         record(lead, n, email, msg_id, thread_id)
         sent.append(lead)

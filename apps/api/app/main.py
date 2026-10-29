@@ -47,4 +47,6 @@ app.include_router(telegram.router)
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    # shows which way email goes out; on Render it must be "gmail-api"
+    from .services import mailer
+    return {"ok": True, "mail": mailer.mode()}

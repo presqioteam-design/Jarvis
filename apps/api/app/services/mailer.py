@@ -14,6 +14,14 @@ from ..config import get_settings
 from . import gmail
 
 
+class MailSetupError(RuntimeError):
+    """Sending can't work with the current settings; stop the batch instead of retrying."""
+
+
+def mode() -> str:
+    return "gmail-api" if gmail.enabled() else "smtp"
+
+
 def build(to: str, subject: str, body: str, in_reply_to: str | None) -> EmailMessage:
     s = get_settings()
     msg = EmailMessage()
@@ -42,5 +50,11 @@ async def send(to: str, subject: str, body: str, in_reply_to: str | None = None,
     msg = build(to, subject, body, in_reply_to)
     if gmail.enabled():
         return await gmail.send(msg, thread_id)
+    if get_settings().render_external_url:
+        # Render's free plan blocks SMTP ports, so trying would only fail with OSError
+        raise MailSetupError(
+            "The Gmail API isn't set up on Render. Add GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN "
+            "in Render → Environment, then redeploy."
+        )
     await asyncio.to_thread(_smtp_send, msg)
     return msg["Message-ID"], None
