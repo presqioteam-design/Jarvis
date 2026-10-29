@@ -37,7 +37,7 @@ async function call<T>(path: string, body: unknown): Promise<T> {
 export const warmUp = () => fetch(`${API_URL}/health`).catch(() => undefined);
 
 export const startVoiceSession = () =>
-  call<{ url: string; maxSeconds: number; callsLeft: number; callsPerDay: number }>("/voice/session", {});
+  call<{ url: string; maxSeconds: number; callsLeft: number | null; callsPerDay: number }>("/voice/session", {});
 export const voiceCommand = (command: string) => call<{ result: string }>("/voice/command", { command });
 export const sendChat = (message: string) => call<{ reply: string }>("/chat", { message });
 export const blockLead = (leadId: string) => call<{ ok: true }>(`/leads/${leadId}/block`, {});

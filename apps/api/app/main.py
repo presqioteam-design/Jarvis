@@ -2,8 +2,10 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from google.api_core.exceptions import ResourceExhausted
 
 from .config import get_settings
 from .routers import campaigns, chat, jobs, telegram, voice
@@ -42,6 +44,15 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+
+@app.exception_handler(ResourceExhausted)
+async def database_quota_used_up(_request: Request, _exc: ResourceExhausted):
+    # handled here (not as a bare 500) so the reply keeps its CORS headers and the page shows why
+    return JSONResponse(status_code=503, content={"detail": (
+        "Jarvis's free database limit for today is used up. It resets around 12:30 PM IST.")})
+
 
 app.include_router(campaigns.router)
 app.include_router(chat.router)

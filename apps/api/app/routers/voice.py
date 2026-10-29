@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from google.api_core.exceptions import ResourceExhausted
 from pydantic import BaseModel, Field
 
 from ..config import get_settings
@@ -69,6 +70,13 @@ async def session():
         left = usage.take("voiceCalls")
     except usage.LimitReached as e:
         raise HTTPException(429, str(e))
+    except ResourceExhausted:
+        left = None   # the database is over its free daily quota; still let the call happen
+    try:
+        data = chat.context_block()
+    except ResourceExhausted:
+        data = ("(Today's numbers are unavailable: the free database limit is used up until it resets around "
+                "12:30 PM IST. Say so if asked about numbers; commands may also fail until then.)")
     now = datetime.now(timezone.utc)
     setup = {
         "model": f"models/{MODEL}",
@@ -77,7 +85,7 @@ async def session():
             "speechConfig": {"languageCode": "en-US", "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": VOICE}}},
         },
         "systemInstruction": {"parts": [{"text": INSTRUCTIONS.format(
-            facts=presqio.FACTS, now=now_local().strftime("%A %d %b, %I:%M %p"), data=chat.context_block())}]},
+            facts=presqio.FACTS, now=now_local().strftime("%A %d %b, %I:%M %p"), data=data)}]},
         "tools": [TOOL],
         # end your turn after a short pause even with background noise, so Jarvis doesn't keep waiting
         "realtimeInputConfig": {"automaticActivityDetection": {

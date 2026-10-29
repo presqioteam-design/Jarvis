@@ -87,30 +87,59 @@ def _fetch(since_days: int) -> list[dict]:
             pass
 
 
+def _lead_emailed(addresses: list[str]) -> dict | None:
+    """The lead we emailed at one of these addresses (Firestore allows 30 per 'in' query)."""
+    addresses = list(dict.fromkeys(addresses))[:30]
+    if not addresses:
+        return None
+    for d in col("leads").where(filter=FieldFilter("emailedTo", "in", addresses)).limit(1).stream():
+        return {"id": d.id, **d.to_dict()}
+    return None
+
+
 async def check() -> int:
-    """Process new replies. Returns how many were new."""
-    contacted = {}
-    for d in col("leads").where(filter=FieldFilter("emailedTo", ">", "")).stream():
-        contacted[d.to_dict()["emailedTo"]] = {"id": d.id, **d.to_dict()}
-    if not contacted:
-        return 0
-    seen = {m.to_dict().get("messageId") for m in col("messages").where(filter=FieldFilter("direction", "==", "in")).stream()}
+    """Process new replies. Returns how many were new.
+
+    Runs every few minutes, so it must stay cheap on the free Firestore quota: one read of
+    meta/inbox (message ids already looked at), then one lead lookup per mail never seen before.
+    Reading every emailed lead on each run used up the daily quota once hundreds were emailed.
+    """
+    state = col("meta").document("inbox")
+    snap = state.get()
+    if snap.exists:
+        seen: dict[str, str] = (snap.to_dict() or {}).get("seen", {})
+    else:   # first run with this format: start from the replies already recorded
+        seen = {m.to_dict().get("messageId"): now_utc().isoformat()
+                for m in col("messages").where(filter=FieldFilter("direction", "==", "in")).stream()
+                if m.to_dict().get("messageId")}
     mails = await fetch(LOOKBACK_DAYS)
 
-    handled = []
+    handled, changed = [], not snap.exists
     for m in mails:
         if not m["messageId"] or m["messageId"] in seen:
             continue
-        if "mailer-daemon" in m["from"] or "postmaster" in m["from"]:
-            lead = next((l for addr, l in contacted.items() if addr in m["body"].lower()), None)
-            if lead:
-                await bounced(lead, m)
-                handled.append(lead["id"])
+        try:
+            if "mailer-daemon" in m["from"] or "postmaster" in m["from"]:
+                lead = _lead_emailed(re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", m["body"].lower()))
+                if lead:
+                    await bounced(lead, m)
+                    handled.append(lead["id"])
+            else:
+                lead = _lead_emailed([m["from"]])
+                if lead:
+                    await replied(lead, m)
+                    handled.append(lead["id"])
+        except Exception:
+            log.exception("Couldn't process mail from %s; will retry next check", m["from"])
             continue
-        lead = contacted.get(m["from"])
-        if lead:
-            await replied(lead, m)
-            handled.append(lead["id"])
+        seen[m["messageId"]] = now_utc().isoformat()
+        changed = True
+
+    # forget ids well past the look-back window so the document stays small
+    cutoff = (now_utc() - timedelta(days=LOOKBACK_DAYS + 7)).isoformat()
+    kept = {k: v for k, v in seen.items() if v >= cutoff}
+    if changed or len(kept) != len(seen):
+        state.set({"seen": kept, "updatedAt": now_utc().isoformat()})
     if handled:
         leads.recompute_area_of(handled)
     return len(handled)

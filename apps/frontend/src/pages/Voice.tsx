@@ -21,7 +21,7 @@ export default function Voice() {
   const [error, setError] = useState("");
   const [muted, setMuted] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  const [allowance, setAllowance] = useState<{ callsLeft: number; callsPerDay: number; maxSeconds: number } | null>(null);
+  const [allowance, setAllowance] = useState<{ callsLeft: number | null; callsPerDay: number; maxSeconds: number } | null>(null);
   const call = useRef<VoiceCall | null>(null);
 
   const live = state === "connecting" || state === "listening" || state === "thinking" || state === "speaking";
@@ -117,7 +117,7 @@ export default function Voice() {
       <p className="voice-foot">
         Works best with headphones.{" "}
         {allowance
-          ? `${allowance.callsLeft} of ${allowance.callsPerDay} calls left today · up to ${Math.round(allowance.maxSeconds / 60)} min each.`
+          ? `${allowance.callsLeft === null ? "" : `${allowance.callsLeft} of ${allowance.callsPerDay} calls left today · `}up to ${Math.round(allowance.maxSeconds / 60)} min each.`
           : "Daily limits keep calls within the free voice allowance."}
       </p>
     </div>

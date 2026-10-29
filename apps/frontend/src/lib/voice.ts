@@ -12,7 +12,7 @@ type Events = {
   caption: (who: "you" | "jarvis", text: string) => void;
   error: (message: string) => void;
   /** Today's allowance, known once the call is set up. */
-  info: (i: { callsLeft: number; callsPerDay: number; maxSeconds: number }) => void;
+  info: (i: { callsLeft: number | null; callsPerDay: number; maxSeconds: number }) => void;
 };
 
 // Runs on the audio thread: averages the mic down to 16 kHz and sends 40 ms Int16 chunks.
