@@ -145,15 +145,15 @@ export default function Dashboard() {
       {loaded && total === 0 && !error ? (
         <GettingStarted />
       ) : (
-        <div className="grid2">
-          <section className="card">
+        <div className="grid2 panels">
+          <section className="card panel">
             <div className="card-head">
               <h2>Needs your attention</h2>
             </div>
             {attention.length === 0 ? (
               <p className="empty">No replies waiting. Jarvis will alert you on Telegram when a hotel answers.</p>
             ) : (
-              <ul className="list">
+              <ul className="list panel-body">
                 {attention.map((l) => (
                   <li key={l.id}>
                     <div>
@@ -167,14 +167,14 @@ export default function Dashboard() {
             )}
           </section>
 
-          <section className="card">
+          <section className="card panel">
             <div className="card-head">
               <h2>What Jarvis did</h2>
             </div>
             {feed.length === 0 ? (
               <p className="empty">Nothing yet.</p>
             ) : (
-              <ul className="list feed">
+              <ul className="list feed panel-body">
                 {feed.map((a) => (
                   <li key={a.id}>
                     <span className={`feed-icon ${a.type}`}><Icon name={ACTIVITY_ICON[a.type]} size={16} /></span>
