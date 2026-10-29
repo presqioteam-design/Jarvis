@@ -22,9 +22,13 @@ async def lifespan(_app: FastAPI):
     s = get_settings()
     tasks = [asyncio.create_task(inbox.watch())]   # runs while awake; the cron worker covers sleep
     # a deploy or restart kills running scans; their progress is saved, so carry on
-    for campaign_id in leads.interrupted():
-        logging.info("Resuming interrupted scan %s", campaign_id)
-        tasks.append(asyncio.create_task(leads.run_campaign(campaign_id)))
+    try:
+        for campaign_id in leads.interrupted():
+            logging.info("Resuming interrupted scan %s", campaign_id)
+            tasks.append(asyncio.create_task(leads.run_campaign(campaign_id)))
+    except Exception:
+        # e.g. Firestore over its daily quota; the server must still start (voice, Telegram, health)
+        logging.exception("Couldn't look for interrupted scans; they resume after the next restart")
     if telegram_service.enabled():
         if s.telegram_mode == "webhook" and s.render_external_url and s.telegram_webhook_secret:
             await telegram_service.set_webhook()
