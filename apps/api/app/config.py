@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     ai_requests_per_day: int = 500   # chat, sorting replies, transcribing voice notes
     tts_per_day: int = 10            # spoken replies (the voice note in the daily report)
 
+    # the night explorer (cron 12:30–5 AM IST): areas searched per night
+    explore_areas_per_night: int = 6
+
 
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

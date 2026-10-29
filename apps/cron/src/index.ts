@@ -12,6 +12,7 @@ export interface Env {
 const JOBS: Record<string, string> = {
   "*/30 4-14 * * MON-SAT": "/jobs/tick",   // every 30 min, 9:30 AM–8 PM IST: auto-send in its hours, else check replies
   "30 13 * * MON-SAT": "/jobs/daily-report",        // 7 PM IST
+  "*/30 19-23 * * *": "/jobs/explore",              // every 30 min, 12:30–5:00 AM IST: the night explorer
 };
 
 async function runJob(env: Env, path: string): Promise<void> {

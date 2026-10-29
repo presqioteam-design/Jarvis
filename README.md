@@ -74,7 +74,7 @@ Run a job by hand: `curl -X POST localhost:8000/jobs/check-replies -H "X-Cron-Se
 |---|---|---|
 | Backend `apps/api` | Render free plan (Docker) | Sleeps after 15 min idle; Telegram and the cron worker wake it |
 | Dashboard `apps/frontend` | Cloudflare Pages | Static site |
-| Scheduled jobs `apps/cron` | Cloudflare Workers | Every 30 min (9:30 AM–8 PM IST): an automatic email batch in sending hours (5 per run, 10 AM–2 PM, up to 40 a day), otherwise a reply check. Daily report with a voice note at 7 PM |
+| Scheduled jobs `apps/cron` | Cloudflare Workers (3 schedules) | Every 30 min (9:30 AM–8 PM IST): an automatic email batch in sending hours (5 per run, 10 AM–2 PM, up to 40 a day), otherwise a reply check. Daily report with a voice note at 7 PM |
 
 ### 1. GitHub
 ```bash
@@ -124,6 +124,7 @@ Render's free plan blocks SMTP, so the deployed API sends and reads mail through
 Without the `GMAIL_*` values the API falls back to SMTP/IMAP with the App Password, which works on your own computer.
 
 ### Free-tier limits to keep in mind
+- Night explorer: `EXPLORE_AREAS_PER_NIGHT` (6) areas between 12:30 and 5 AM IST. It lists the top 50 cities by population (OpenStreetMap), then their areas, and saves only hotels with an email or phone. Telegram: `explore status`, `pause explore`, `explore <city> next`.
 - Gemini (free key): Jarvis caps its own use per day so it never runs into Google's limits. Change these in Render → Environment:
   `VOICE_CALLS_PER_DAY` (10), `VOICE_MINUTES_PER_CALL` (10), `AI_REQUESTS_PER_DAY` (500: chat, sorting replies, voice-note transcripts),
   `TTS_PER_DAY` (10: spoken reports). Say `usage` on Telegram to see today's numbers; they reset at midnight IST.

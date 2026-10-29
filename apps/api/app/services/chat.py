@@ -15,7 +15,7 @@ from google.api_core.exceptions import ResourceExhausted
 from ..config import get_settings
 from ..firebase import col
 from ..timeutil import now_local, now_utc
-from . import activity, inbox, leads, llm, outreach, presqio, report, telegram, usage, voice
+from . import activity, explore, inbox, leads, llm, outreach, presqio, report, telegram, usage, voice
 
 log = logging.getLogger(__name__)
 _tasks: set[asyncio.Task] = set()   # keep background scans alive
@@ -37,6 +37,7 @@ or, when the admin clearly asks you to do something, one of these actions:
 {{"reply": "...", "action": {{"name": "check_replies"}}}}
 {{"reply": "...", "action": {{"name": "auto", "on": true|false}}}}   (turn automatic sending on or off)
 {{"reply": "...", "action": {{"name": "report"}}}}   (today's report now)
+{{"reply": "...", "action": {{"name": "explore_status"}}}}   (how the night explorer is doing)
 {{"reply": "...", "action": {{"name": "list_leads", "area": "<locality or null>", "status": "new|ready|emailed|replied|interested|no_contact"}}}}
 {{"reply": "...", "action": {{"name": "approve", "numbers": [<numbers from the last list>]}}}}
 {{"reply": "...", "action": {{"name": "approve_all", "area": "<locality or null for the whole city>"}}}}
@@ -88,7 +89,8 @@ def context_block() -> str:
         f"EMAILS TODAY: {outreach.sent_today()} of {s.daily_email_cap} daily limit; "
         f"follow-ups due now: {len(outreach.due_follow_ups(100))}; sending right now: {'yes' if outreach.busy() else 'no'}\n"
         f"AUTO-SEND: {'on' if outreach.auto_enabled() else 'paused'} ({outreach.auto_window()})\n"
-        f"GEMINI USAGE TODAY: {usage.summary()}\n\n"
+        f"GEMINI USAGE TODAY: {usage.summary()}\n"
+        f"NIGHT EXPLORER: {explore.status().replace(chr(10), ' ')}\n\n"
         f"MOST EMAILS (sorted): {most_email}\n\n"
         f"AREAS (biggest first):\n{area_lines}\n\n"
         f"NEEDS ATTENTION:\n{hot_lines}\n\n"
@@ -165,6 +167,10 @@ HELP = """Here's what you can tell me:
 • which area has the most emails?
 • what does Presqio cost? (I'll say: call us)
 
+🌍 Night explorer (finds new hotels 12:30–5 AM, report in the morning)
+• explore status · pause explore / resume explore
+• explore Pune next — put a city first in line
+
 📊 report — today's numbers now (also sent at 7 PM, with a voice note)
 📈 usage — today's AI and voice usage against the daily limits
 🎙 You can send me voice notes too.
@@ -179,6 +185,10 @@ COMMANDS = [
     (re.compile(r"^auto(?:[\s-]?send)?\s+status\??$|^status\??$", re.I), lambda m: {"name": "auto_status"}),
     (re.compile(r"^/?(daily\s+)?report[.!?]*$", re.I), lambda m: {"name": "report"}),
     (re.compile(r"^/?(usage|limits?|quota)[.!?]*$", re.I), lambda m: {"name": "usage"}),
+    (re.compile(r"^explor(?:e|er|ing)\s+status\??$", re.I), lambda m: {"name": "explore_status"}),
+    (re.compile(r"^(pause|stop)\s+explor(?:e|er|ing)[.!]*$", re.I), lambda m: {"name": "explore_on", "on": False}),
+    (re.compile(r"^(resume|start)\s+explor(?:e|er|ing)[.!]*$", re.I), lambda m: {"name": "explore_on", "on": True}),
+    (re.compile(r"^explore\s+(.+?)\s+next[.!]*$", re.I), lambda m: {"name": "explore_next", "city": m[1]}),
     (re.compile(r"^send\s+(\d+)(?:\s+(?:new\s+)?(?:e-?mails?|mails?))?(?:\s+(?:in|to|from|at)\s+(.+?))?[.!]*$", re.I),
      lambda m: {"name": "send_emails", "count": int(m[1]), "area": m[2]}),
     (re.compile(r"^send\s+follow[\s-]?ups?[.!]*$", re.I), lambda m: {"name": "send_follow_ups"}),
@@ -239,6 +249,17 @@ def run_action(action: dict) -> tuple[bool, str]:
         return outreach.start(outreach.send_follow_ups()), ""
     if name == "help":
         return False, HELP
+    if name == "explore_status":
+        return False, explore.status()
+    if name == "explore_on":
+        explore.set_enabled(bool(action.get("on")))
+        return False, ("🌍 Explorer is ON: it searches new areas every night from 12:30 AM." if action.get("on")
+                       else "⏸ Explorer is PAUSED. Say “resume explore” to restart.")
+    if name == "explore_next":
+        task = asyncio.create_task(_explore_next(str(action.get("city", ""))))
+        _tasks.add(task)
+        task.add_done_callback(_tasks.discard)
+        return True, "🌍 Looking that city up…"
     if name == "usage":
         return False, f"📊 Gemini used today: {usage.summary()}. Limits reset at midnight."
     if name == "auto":
@@ -300,6 +321,10 @@ def run_action(action: dict) -> tuple[bool, str]:
         task.add_done_callback(_tasks.discard)
         return False, f"🔎 Scanning {place} for hotels. This can take a while; I'll message you when it's done."
     return False, ""
+
+
+async def _explore_next(city: str) -> None:
+    await telegram.send(await explore.prioritise(city))
 
 
 async def _check_replies() -> None:

@@ -206,8 +206,9 @@ async def scan_squares(ref, scan: dict, campaign_id: str, city: str) -> None:
 
 
 def upsert(hotels: list[dict], campaign_id: str, city: str) -> int:
-    """Create new leads; for known ones only fill missing details. Returns how many were new."""
-    hotels = [h for h in hotels if h["name"]]
+    """Create new leads; for known ones only fill missing details. Returns how many were new.
+    Hotels with no phone, email or website can never be contacted, so they aren't saved."""
+    hotels = [h for h in hotels if h["name"] and (h["phone"] or h["emails"] or h["website"])]
     if not hotels:
         return 0
     refs = [col("leads").document(h["id"]) for h in hotels]
@@ -282,10 +283,13 @@ async def crawl_city(city: str) -> None:
         info = found.get(lead.get("website", ""), {})
         emails = [e for e in lead.get("emails") or info.get("emails", []) if crawler.usable(e)]
         phone = lead.get("phone") or info.get("phone", "")
-        patch = {"crawled": True, "emails": emails, "hasEmail": bool(emails), "phone": phone, "updatedAt": now}
-        if lead["status"] == "no_contact" and (emails or phone):
-            patch["status"] = "new"
-        batch.update(d.reference, patch)
+        if not emails and not phone and lead["status"] in ("new", "no_contact"):
+            batch.delete(d.reference)   # the website had no contact details either: nothing to reach
+        else:
+            patch = {"crawled": True, "emails": emails, "hasEmail": bool(emails), "phone": phone, "updatedAt": now}
+            if lead["status"] == "no_contact":
+                patch["status"] = "new"
+            batch.update(d.reference, patch)
         pending += 1
         if pending >= 400:
             batch.commit()
