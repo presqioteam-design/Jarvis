@@ -132,7 +132,8 @@ async def _run_campaign(campaign_id: str) -> None:
 
         if camp.get("kind") == "area":
             # a spot search only touches nearby areas: don't re-read the whole city
-            nearby = leads_in_box(camp["box"], ["areaKey", "emails", "phone"])
+            nearby = leads_in_box(camp["box"], ["areaKey", "emails", "phone", "name", "area", "city"])
+            merge_search_index(city, [l for l in nearby if l.get("city") == city])
             for key in {l["areaKey"] for l in nearby if l.get("areaKey")}:
                 recompute_area(key)
             totals = {
@@ -319,8 +320,10 @@ def recompute_areas(city: str) -> dict:
     """Rebuild a city's totals from every lead. Run after a scan, not after small edits."""
     groups: dict[str, list] = defaultdict(list)
     unflagged = []
-    for d in col("leads").where(filter=FieldFilter("city", "==", city)).select(["area", "areaKey", "status", "emails", "phone", "hasEmail"]).stream():
+    everyone = []
+    for d in col("leads").where(filter=FieldFilter("city", "==", city)).select(["name", "area", "areaKey", "status", "emails", "phone", "hasEmail"]).stream():
         l = d.to_dict()
+        everyone.append(l | {"id": d.id})
         groups[l["areaKey"]].append(l)
         if l.get("emails") and not l.get("hasEmail"):
             unflagged.append(d.reference)
@@ -329,7 +332,46 @@ def recompute_areas(city: str) -> dict:
         for r in unflagged[i:i + 400]:
             batch.update(r, {"hasEmail": True})
         batch.commit()
+    write_search_index(city, everyone)
     return write_city(city, {k: area_summary(rows, city) for k, rows in groups.items()})
+
+
+# ── search list ──────────────────────────────────────────────────────────────
+# Firestore can't search inside text, so each city keeps a compact list of
+# every lead (id, name, email, phone, area) in a few docs. The dashboard loads
+# it once and searches in the browser: no reads while typing.
+
+SEARCH_SHARD = 2500   # entries per doc, well under Firestore's 1 MiB doc limit
+
+
+def search_entry(l: dict) -> dict:
+    return {"i": l["id"], "n": l.get("name", ""), "e": (l.get("emails") or [""])[0], "p": l.get("phone", ""), "a": l.get("area", "")}
+
+
+def write_search_index(city: str, rows: list[dict]) -> None:
+    entries = sorted((search_entry(l) for l in rows), key=lambda e: e["n"].lower())
+    shards = [entries[i:i + SEARCH_SHARD] for i in range(0, len(entries), SEARCH_SHARD)] or [[]]
+    batch = db().batch()
+    for n, part in enumerate(shards):
+        batch.set(col("search").document(f"{slug(city)}-{n}"), {"city": city, "part": n, "entries": part, "updatedAt": now_utc().isoformat()})
+    batch.commit()
+    # drop shards left over from a bigger list
+    for d in col("search").where(filter=FieldFilter("city", "==", city)).select(["part"]).stream():
+        if d.to_dict().get("part", 0) >= len(shards):
+            d.reference.delete()
+
+
+def merge_search_index(city: str, rows: list[dict]) -> None:
+    """Add or update a few leads without re-reading the whole city."""
+    if not rows:
+        return
+    current = {}
+    for d in col("search").where(filter=FieldFilter("city", "==", city)).stream():
+        for e in d.to_dict().get("entries", []):
+            current[e["i"]] = e
+    for l in rows:
+        current[l["id"]] = search_entry(l)
+    write_search_index(city, [{"id": e["i"], "name": e["n"], "emails": [e["e"]] if e["e"] else [], "phone": e["p"], "area": e["a"]} for e in current.values()])
 
 
 def recompute_area(key: str) -> None:

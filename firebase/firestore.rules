@@ -16,6 +16,7 @@ service cloud.firestore {
       match /activity/{id} { allow read: if isOwner(uid); }
       match /chats/{id}    { allow read: if isOwner(uid); }
       match /cities/{id}   { allow read: if isOwner(uid); }
+      match /search/{id}   { allow read: if isOwner(uid); }
 
       // The admin edits these from the dashboard (approve leads, add notes, block contacts).
       match /campaigns/{id} { allow read, write: if isOwner(uid); }

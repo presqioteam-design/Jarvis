@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  collection, doc, getDocs, limit, onSnapshot, query, startAfter, where, type QueryDocumentSnapshot,
+  collection, doc, documentId, getDocs, limit, onSnapshot, query, startAfter, where, type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import type { AreaSummary, Campaign, CitySummary, Lead, LeadStatus } from "@jarvis/shared";
 import { db, userPath } from "../lib/firebase";
@@ -36,6 +36,18 @@ const PAGE_SIZE = 20;
  * without. Equality-only queries need no composite index in Firestore.
  */
 type Phase = { status: LeadStatus; hasEmail: boolean };
+
+/** One hotel in the city's search list (built by the API): id, name, email, phone, area. */
+type Entry = { i: string; n: string; e: string; p: string; a: string };
+
+/** Matches any part of the name, email or area; for numbers, any part of the phone (with or without +91). */
+function matches(e: Entry, words: string[], digits: string): boolean {
+  if (digits.length >= 3 && words.every((w) => /^[+\d\s-]+$/.test(w))) {
+    return e.p.replace(/\D/g, "").includes(digits.replace(/^(91|0)(?=\d{10}$)/, ""));
+  }
+  const hay = `${e.n} ${e.e} ${e.a}`.toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
 type Cursor = { phase: number; last: QueryDocumentSnapshot | null; done: boolean };
 
 export default function Leads() {
@@ -46,6 +58,11 @@ export default function Leads() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const [typed, setTyped] = useState("");                 // the search text after a short pause
+  const [index, setIndex] = useState<Entry[] | null>(null);
+  const [indexLoading, setIndexLoading] = useState(false);
+  const [found, setFound] = useState<Record<string, Row>>({});   // full leads fetched for search results
+  const [visible, setVisible] = useState(PAGE_SIZE);
   const [error, setError] = useState("");
   const [working, setWorking] = useState(false);
   const cursor = useRef<Cursor>({ phase: 0, last: null, done: false });
@@ -82,6 +99,64 @@ export default function Leads() {
     if (!city) return;
     return onSnapshot(doc(db, userPath(user.uid, "cities", slug(city))), (s) => setSummary(s.exists() ? (s.data() as CitySummary) : null), onError);
   }, [user.uid, city, onError]);
+
+  // ── search: load the city's list once, then filter in the browser ─────────
+  useEffect(() => {
+    const t = setTimeout(() => setTyped(search.trim().toLowerCase()), 150);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const loadIndex = useCallback(async () => {
+    if (index || indexLoading || !city) return;
+    setIndexLoading(true);
+    try {
+      const snap = await getDocs(query(collection(db, userPath(user.uid, "search")), where("city", "==", city)));
+      setIndex(snap.docs.flatMap((d) => (d.data().entries as Entry[]) ?? []));
+    } catch (e) {
+      onError(e as { code?: string });
+    } finally {
+      setIndexLoading(false);
+    }
+  }, [index, indexLoading, city, user.uid, onError]);
+
+  useEffect(() => setIndex(null), [city]);
+  useEffect(() => {
+    if (search) loadIndex();
+  }, [search, loadIndex]);
+
+  const hits = useMemo(() => {
+    if (!typed || !index) return [];
+    const words = typed.split(/\s+/).filter(Boolean);
+    const digits = typed.replace(/\D/g, "");
+    return index.filter((e) => (!area || e.a === area) && matches(e, words, digits));
+  }, [typed, index, area]);
+
+  useEffect(() => {
+    setVisible(PAGE_SIZE);
+    listRef.current?.scrollTo({ top: 0 });
+  }, [typed, area]);
+
+  // fetch full details only for the results on screen (30 ids per query is Firestore's limit for "in")
+  useEffect(() => {
+    const want = hits.slice(0, visible).map((h) => h.i).filter((id) => !found[id]);
+    if (!want.length) return;
+    let cancelled = false;
+    (async () => {
+      const got: Record<string, Row> = {};
+      for (let i = 0; i < want.length; i += 30) {
+        const snap = await getDocs(query(collection(db, userPath(user.uid, "leads")), where(documentId(), "in", want.slice(i, i + 30))));
+        snap.docs.forEach((d) => (got[d.id] = { id: d.id, ...(d.data() as Lead) }));
+      }
+      if (!cancelled) setFound((f) => ({ ...f, ...got }));
+    })().catch((e) => onError(e));
+    return () => {
+      cancelled = true;
+    };
+    // found is read, not watched: watching it would refetch after every page
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hits, visible, user.uid, onError]);
+
+  const searching = !!search.trim();
 
   const loadMore = useCallback(async () => {
     const c = cursor.current;
@@ -135,15 +210,17 @@ export default function Leads() {
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
-    const io = new IntersectionObserver((entries) => entries[0].isIntersecting && loadMore(), { root: listRef.current, rootMargin: "200px" });
+    const next = () => (searching ? setVisible((v) => (v < hits.length ? v + PAGE_SIZE : v)) : loadMore());
+    const io = new IntersectionObserver((entries) => entries[0].isIntersecting && next(), { root: listRef.current, rootMargin: "200px" });
     io.observe(el);
     return () => io.disconnect();
-  }, [loadMore, rows.length]);
+  }, [loadMore, rows.length, searching, hits.length, visible]);
 
-  const shown = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return q ? rows.filter((l) => `${l.name} ${l.address} ${l.area ?? ""} ${l.emails.join(" ")} ${l.phone ?? ""}`.toLowerCase().includes(q)) : rows;
-  }, [rows, search]);
+  const shown = useMemo(
+    () => (searching ? hits.slice(0, visible).map((h) => found[h.i]).filter((l): l is Row => !!l) : rows),
+    [searching, hits, visible, found, rows],
+  );
+  const searchPending = searching && (indexLoading || !index || typed !== search.trim().toLowerCase() || shown.length < Math.min(visible, hits.length));
 
   // counts come from the city summary, so they cover every lead, not just loaded ones
   const counted = area ? areas.filter((a) => a.area === area) : areas;
@@ -157,8 +234,10 @@ export default function Leads() {
   };
 
   /** Update loaded rows in place; drop the ones that no longer belong in this tab. */
-  const applyLocal = (ids: string[], status: LeadStatus) =>
+  const applyLocal = (ids: string[], status: LeadStatus) => {
     setRows((r) => r.map((l) => (ids.includes(l.id) ? { ...l, status } : l)).filter((l) => tab.statuses.includes(l.status)));
+    setFound((f) => Object.fromEntries(Object.entries(f).map(([id, l]) => [id, ids.includes(id) ? { ...l, status } : l])));
+  };
 
   async function changeStatus(ids: string[], status: "new" | "ready") {
     setWorking(true);
@@ -229,10 +308,25 @@ export default function Leads() {
             <option key={a.area} value={a.area}>{a.area} · {a.total} hotels{a.withEmail ? ` · ${a.withEmail} email` : ""}</option>
           ))}
         </select>
-        <label className="sr-only" htmlFor="lead-search">Search loaded leads</label>
-        <input id="lead-search" className="input" placeholder="Search loaded leads…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <div className="search-box">
+          <Icon name="search" size={16} />
+          <label className="sr-only" htmlFor="lead-search">Search hotels by name, email or phone</label>
+          <input id="lead-search" className="input" placeholder={`Search ${city || "hotels"} by name, email or phone…`} autoComplete="off"
+            value={search} onChange={(e) => setSearch(e.target.value)} onFocus={loadIndex}
+            onKeyDown={(e) => e.key === "Escape" && setSearch("")} />
+          {search && (
+            <button type="button" className="icon-btn clear" onClick={() => setSearch("")} aria-label="Clear search">×</button>
+          )}
+        </div>
       </div>
 
+      {searching ? (
+        <p className="muted small search-note" aria-live="polite">
+          {indexLoading || !index
+            ? "Getting the hotel list ready…"
+            : `${hits.length.toLocaleString()} ${hits.length === 1 ? "match" : "matches"}${area ? ` in ${area}` : ` in ${city}`}, any status. Press Esc to clear.`}
+        </p>
+      ) : (
       <div className="tabs" role="tablist">
         {TABS.map((t) => (
           <button key={t.key} role="tab" aria-selected={tab.key === t.key} className={`tab ${tab.key === t.key ? "active" : ""}`} onClick={() => setParam({ tab: t.key === "review" ? "" : t.key })}>
@@ -240,11 +334,14 @@ export default function Leads() {
           </button>
         ))}
       </div>
+      )}
 
       <section className="card table-card">
         <div className="lead-scroll" ref={listRef}>
-          {shown.length === 0 && !loading && cursor.current.done ? (
-            <p className="empty">{search ? "No loaded leads match. Scroll to load more, or clear the search." : "Nothing here."}</p>
+          {searching && !searchPending && hits.length === 0 ? (
+            <p className="empty">No hotel matches “{search.trim()}”. Try part of the name, the email, or the last digits of the phone.</p>
+          ) : !searching && shown.length === 0 && !loading && cursor.current.done ? (
+            <p className="empty">Nothing here.</p>
           ) : (
             <ul className="leads">
               {shown.map((l) => (
@@ -273,7 +370,9 @@ export default function Leads() {
             </ul>
           )}
           <div ref={sentinelRef} className="list-end muted small" aria-live="polite">
-            {loading ? <><span className="spinner" /> Loading more…</> : cursor.current.done && rows.length > 0 ? `All ${rows.length} loaded` : ""}
+            {searching
+              ? searchPending ? <><span className="spinner" /> Searching…</> : hits.length > visible ? "" : hits.length ? `All ${hits.length} shown` : ""
+              : loading ? <><span className="spinner" /> Loading more…</> : cursor.current.done && rows.length > 0 ? `All ${rows.length} loaded` : ""}
           </div>
         </div>
       </section>
