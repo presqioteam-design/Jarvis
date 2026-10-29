@@ -32,6 +32,13 @@ export default function Voice() {
     return () => clearInterval(id);
   }, [live]);
 
+  // once the call is over, clear the last lines so the screen is clean for the next one
+  useEffect(() => {
+    if (state !== "ended") return;
+    const id = setTimeout(() => { setYou(""); setJarvis(""); }, 1800);
+    return () => clearTimeout(id);
+  }, [state]);
+
   useEffect(() => {
     warmUp(); // wake the server while you read the page
     return () => call.current?.stop();
@@ -81,6 +88,25 @@ export default function Voice() {
       <span className="hud-corner br" aria-hidden="true" />
       <span className="hud-rail left" aria-hidden="true" />
       <span className="hud-rail right" aria-hidden="true" />
+
+      <aside className="hud-panel left" aria-hidden="true">
+        <h4>SYSTEM</h4>
+        <dl>
+          <dt>CORE</dt><dd>{live ? "ONLINE" : state === "error" ? "FAULT" : "STANDBY"}</dd>
+          <dt>LINK</dt><dd>{state === "connecting" ? "HANDSHAKE" : live ? "GEMINI LIVE" : "—"}</dd>
+          <dt>VOICE</dt><dd>{muted ? "MUTED" : live ? "OPEN" : "—"}</dd>
+          <dt>MODE</dt><dd>SALES OPS</dd>
+        </dl>
+      </aside>
+      <aside className="hud-panel right" aria-hidden="true">
+        <h4>SESSION</h4>
+        <dl>
+          <dt>TIME</dt><dd>{live ? clock : "00:00"}</dd>
+          <dt>LIMIT</dt><dd>{allowance ? `${Math.round(allowance.maxSeconds / 60)} MIN` : "—"}</dd>
+          <dt>CALLS</dt><dd>{allowance?.callsLeft != null ? `${allowance.callsLeft} LEFT` : "—"}</dd>
+          <dt>USER</dt><dd>BOSS</dd>
+        </dl>
+      </aside>
 
       <div className="orb-wrap">
         <Orb state={state} levels={() => call.current?.levels() ?? { you: 0, jarvis: 0 }} />
