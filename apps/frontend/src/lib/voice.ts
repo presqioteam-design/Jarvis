@@ -85,7 +85,10 @@ export class VoiceCall {
     this.outAn = this.outCtx.createAnalyser();
     this.outGain.connect(this.outAn).connect(this.outCtx.destination);
 
+    // set up audio and ask the server for the call at the same time
     this.micCtx = new AudioContext();
+    const session = startVoiceSession();
+    session.catch(() => undefined); // handled below; avoids an unhandled-rejection warning meanwhile
     await this.micCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([MIC_WORKLET], { type: "text/javascript" })));
     const src = this.micCtx.createMediaStreamSource(this.stream);
     this.micAn = this.micCtx.createAnalyser();
@@ -100,7 +103,7 @@ export class VoiceCall {
 
     let url: string;
     try {
-      const s = await startVoiceSession();
+      const s = await session;
       url = s.url;
       this.on.info(s);
       // daily-limit guard: Jarvis wraps up a minute before the end, then the call closes
@@ -126,7 +129,7 @@ export class VoiceCall {
     if (m.setupComplete) {
       this.set("listening");
       // greet first, so it feels like Jarvis picked up
-      this.say("The admin just opened the call. Greet them in one short sentence and mention one useful number from today.");
+      this.say("The admin just opened the call. Greet them in English in a few words, like a quick hello, then wait.");
       return;
     }
     if (m.toolCall) {

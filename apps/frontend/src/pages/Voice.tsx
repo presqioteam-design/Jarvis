@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Orb from "../components/Orb";
 import Icon from "../components/Icon";
 import { VoiceCall, type CallState } from "../lib/voice";
+import { warmUp } from "../lib/api";
 
 const STATUS: Record<CallState | "idle", string> = {
   idle: "Tap to talk to Jarvis",
@@ -31,7 +32,10 @@ export default function Voice() {
     return () => clearInterval(id);
   }, [live]);
 
-  useEffect(() => () => call.current?.stop(), []);
+  useEffect(() => {
+    warmUp(); // wake the server while you read the page
+    return () => call.current?.stop();
+  }, []);
 
   async function begin() {
     setError("");
@@ -104,7 +108,7 @@ export default function Voice() {
             </button>
           </>
         ) : (
-          <button className="call-btn" onClick={begin}>
+          <button className="call-btn" onClick={begin} onPointerEnter={warmUp}>
             <Icon name="mic" size={22} />
             {state === "ended" || state === "error" ? "Call again" : "Talk to Jarvis"}
           </button>

@@ -26,6 +26,8 @@ VOICE = "Charon"   # a calm, deep voice
 WS_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained"
 
 INSTRUCTIONS = """You are J.A.R.V.I.S., the voice of Presqio's sales assistant, talking live with the admin (the Presqio owner).
+LANGUAGE: always speak English, every single reply, with a clear neutral accent. If the admin speaks Hindi, Telugu or any
+other language, understand it but answer in English. Never switch languages, even for one word or a greeting.
 Speak like a calm, capable assistant: short, natural sentences, one to three at a time. This is a spoken conversation:
 no lists, no markdown, no reading out email addresses unless asked. Say numbers naturally.
 
@@ -71,7 +73,7 @@ async def session():
         "model": f"models/{MODEL}",
         "generationConfig": {
             "responseModalities": ["AUDIO"],
-            "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": VOICE}}},
+            "speechConfig": {"languageCode": "en-US", "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": VOICE}}},
         },
         "systemInstruction": {"parts": [{"text": INSTRUCTIONS.format(
             facts=presqio.FACTS, now=now_local().strftime("%A %d %b, %I:%M %p"), data=chat.context_block())}]},

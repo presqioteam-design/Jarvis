@@ -33,6 +33,9 @@ async function call<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Wake the free Render server early (it sleeps after 15 min), so a call starts without the wait. */
+export const warmUp = () => fetch(`${API_URL}/health`).catch(() => undefined);
+
 export const startVoiceSession = () =>
   call<{ url: string; maxSeconds: number; callsLeft: number; callsPerDay: number }>("/voice/session", {});
 export const voiceCommand = (command: string) => call<{ result: string }>("/voice/command", { command });
