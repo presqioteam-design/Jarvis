@@ -8,6 +8,8 @@ browser relays the tool call to /voice/command, which runs the same commands
 as Telegram.
 """
 
+import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -68,21 +70,50 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
 
+# Jarvis's briefing (today's numbers) takes a dozen Firestore lookups, 2-3 s from Render. The page asks
+# for it in the background when Talk to Jarvis opens (/voice/prepare), so tapping Call doesn't wait.
+BRIEFING_FRESH_SECONDS = 120
+QUOTA_NOTE = ("(Today's numbers are unavailable: the free database limit is used up until it resets around "
+              "12:30 PM IST. Say so if asked about numbers; commands may also fail until then.)")
+_briefing: tuple[float, str] | None = None
+_building: asyncio.Task | None = None
+
+
+async def _briefing_text() -> str:
+    global _briefing, _building
+    if _briefing and time.monotonic() - _briefing[0] < BRIEFING_FRESH_SECONDS:
+        return _briefing[1]
+    if _building is None or _building.done():   # one build at a time, shared by prepare and session
+        _building = asyncio.create_task(asyncio.to_thread(chat.context_block))
+    try:
+        data = await asyncio.shield(_building)
+    except ResourceExhausted:
+        return QUOTA_NOTE
+    _briefing = (time.monotonic(), data)
+    return data
+
+
+@router.post("/prepare")
+async def prepare():
+    """Build the briefing ahead of the call; called when the voice page opens."""
+    await _briefing_text()
+    return {"ok": True}
+
+
+def _take_call() -> int | None:
+    try:
+        return usage.take("voiceCalls")
+    except ResourceExhausted:
+        return None   # the database is over its free daily quota; still let the call happen
+
+
 @router.post("/session")
 async def session():
     """A single-use token for one call, valid to start within 2 minutes."""
     s = get_settings()
-    try:
-        left = usage.take("voiceCalls")
-    except usage.LimitReached as e:
-        raise HTTPException(429, str(e))
-    except ResourceExhausted:
-        left = None   # the database is over its free daily quota; still let the call happen
-    try:
-        data = chat.context_block()
-    except ResourceExhausted:
-        data = ("(Today's numbers are unavailable: the free database limit is used up until it resets around "
-                "12:30 PM IST. Say so if asked about numbers; commands may also fail until then.)")
+    # count the call while the briefing is fetched (usually already prepared)
+    counting = asyncio.create_task(asyncio.to_thread(_take_call))
+    data = await _briefing_text()
     now = datetime.now(timezone.utc)
     setup = {
         "model": f"models/{MODEL}",
@@ -105,6 +136,10 @@ async def session():
                               json={"uses": 1, "expireTime": _iso(now + timedelta(minutes=30)),
                                     "newSessionExpireTime": _iso(now + timedelta(minutes=2)),
                                     "bidiGenerateContentSetup": setup})
+    try:
+        left = await counting
+    except usage.LimitReached as e:
+        raise HTTPException(429, str(e))   # the unused token simply expires
     if r.status_code != 200:
         raise HTTPException(502, "Couldn't start a voice session with Gemini. Try again in a minute.")
     return {"url": f"{WS_URL}?access_token={r.json()['name']}", "maxSeconds": s.voice_minutes_per_call * 60,
