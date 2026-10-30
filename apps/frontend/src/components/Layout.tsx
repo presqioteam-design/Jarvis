@@ -1,6 +1,8 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { logOut, useUser } from "../lib/auth";
 import Icon, { Logo, type IconName } from "./Icon";
+import CallBanner from "./CallBanner";
+import { CallProvider } from "../lib/call";
 
 const NAV: { to: string; label: string; icon: IconName; soon?: boolean }[] = [
   { to: "/dashboard", label: "Dashboard", icon: "dashboard" },
@@ -32,77 +34,80 @@ export default function Layout() {
   );
 
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <Logo size={28} />
-          <div>
-            <div className="brand-name">JARVIS</div>
-            <div className="brand-sub">for Presqio</div>
+    <CallProvider>
+      <div className="shell">
+        <aside className="sidebar">
+          <div className="brand">
+            <Logo size={28} />
+            <div>
+              <div className="brand-name">JARVIS</div>
+              <div className="brand-sub">for Presqio</div>
+            </div>
           </div>
-        </div>
 
-        <nav className="nav" aria-label="Main">
-          {NAV.map((n) =>
-            n.soon ? (
-              <span key={n.to} className="navlink disabled" aria-disabled="true">
-                <Icon name={n.icon} />
-                <span>{n.label}</span>
-                <span className="soon">Soon</span>
-              </span>
+          <nav className="nav" aria-label="Main">
+            {NAV.map((n) =>
+              n.soon ? (
+                <span key={n.to} className="navlink disabled" aria-disabled="true">
+                  <Icon name={n.icon} />
+                  <span>{n.label}</span>
+                  <span className="soon">Soon</span>
+                </span>
+              ) : (
+                <NavLink key={n.to} to={n.to} className={({ isActive }) => `navlink ${isActive ? "active" : ""}`}>
+                  <Icon name={n.icon} />
+                  <span>{n.label}</span>
+                </NavLink>
+              ),
+            )}
+          </nav>
+
+          <div className="profile">
+            {user?.photoURL ? (
+              <img src={user.photoURL} alt="" className="avatar" referrerPolicy="no-referrer" />
             ) : (
-              <NavLink key={n.to} to={n.to} className={({ isActive }) => `navlink ${isActive ? "active" : ""}`}>
-                <Icon name={n.icon} />
-                <span>{n.label}</span>
-              </NavLink>
-            ),
-          )}
-        </nav>
+              <span className="avatar fallback">{(user?.displayName ?? "A")[0]}</span>
+            )}
+            <div className="profile-text">
+              <div className="profile-name">{user?.displayName ?? "Admin"}</div>
+              <div className="muted small ellipsis">{user?.email}</div>
+            </div>
+            <button className="icon-btn" onClick={logOut} title="Sign out" aria-label="Sign out">
+              <Icon name="logout" size={18} />
+            </button>
+          </div>
+        </aside>
 
-        <div className="profile">
+        <header className={`appbar ${onVoice ? "on-voice" : ""}`}>
+          <Logo size={30} />
+          <div className="appbar-title">
+            <span className="appbar-brand">JARVIS</span>
+            <span className="appbar-page">{onVoice ? "Voice" : title}</span>
+          </div>
           {user?.photoURL ? (
             <img src={user.photoURL} alt="" className="avatar" referrerPolicy="no-referrer" />
           ) : (
             <span className="avatar fallback">{(user?.displayName ?? "A")[0]}</span>
           )}
-          <div className="profile-text">
-            <div className="profile-name">{user?.displayName ?? "Admin"}</div>
-            <div className="muted small ellipsis">{user?.email}</div>
-          </div>
           <button className="icon-btn" onClick={logOut} title="Sign out" aria-label="Sign out">
-            <Icon name="logout" size={18} />
+            <Icon name="logout" size={20} />
           </button>
-        </div>
-      </aside>
+        </header>
 
-      <header className={`appbar ${onVoice ? "on-voice" : ""}`}>
-        <Logo size={30} />
-        <div className="appbar-title">
-          <span className="appbar-brand">JARVIS</span>
-          <span className="appbar-page">{onVoice ? "Voice" : title}</span>
-        </div>
-        {user?.photoURL ? (
-          <img src={user.photoURL} alt="" className="avatar" referrerPolicy="no-referrer" />
-        ) : (
-          <span className="avatar fallback">{(user?.displayName ?? "A")[0]}</span>
-        )}
-        <button className="icon-btn" onClick={logOut} title="Sign out" aria-label="Sign out">
-          <Icon name="logout" size={20} />
-        </button>
-      </header>
+        <main className={`main ${onVoice ? "main-voice" : ""}`}>
+          <Outlet />
+        </main>
 
-      <main className={`main ${onVoice ? "main-voice" : ""}`}>
-        <Outlet />
-      </main>
-
-      <nav className={`tabbar ${onVoice ? "on-voice" : ""}`} aria-label="Main">
-        {TABS.slice(0, 2).map(tab)}
-        <NavLink to="/voice" className={({ isActive }) => `tabbar-item tab-jarvis ${isActive ? "active" : ""}`} aria-label="Talk to Jarvis">
-          <span className="tab-jarvis-orb"><Logo size={38} /></span>
-          <span>Jarvis</span>
-        </NavLink>
-        {TABS.slice(2).map(tab)}
-      </nav>
-    </div>
+        <nav className={`tabbar ${onVoice ? "on-voice" : ""}`} aria-label="Main">
+          {TABS.slice(0, 2).map(tab)}
+          <NavLink to="/voice" className={({ isActive }) => `tabbar-item tab-jarvis ${isActive ? "active" : ""}`} aria-label="Talk to Jarvis">
+            <span className="tab-jarvis-orb"><Logo size={38} /></span>
+            <span>Jarvis</span>
+          </NavLink>
+          {TABS.slice(2).map(tab)}
+        </nav>
+        <CallBanner />
+      </div>
+    </CallProvider>
   );
 }

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import Orb from "../components/Orb";
 import Icon from "../components/Icon";
-import { VoiceCall, type CallState } from "../lib/voice";
+import type { CallState } from "../lib/voice";
+import { clockOf, useCall } from "../lib/call";
 import { prepareVoice, warmUp } from "../lib/api";
 
 const STATUS: Record<CallState | "idle", string> = {
@@ -15,63 +16,15 @@ const STATUS: Record<CallState | "idle", string> = {
 };
 
 export default function Voice() {
-  const [state, setState] = useState<CallState | "idle">("idle");
-  const [you, setYou] = useState("");
-  const [jarvis, setJarvis] = useState("");
-  const [error, setError] = useState("");
-  const [muted, setMuted] = useState(false);
-  const [seconds, setSeconds] = useState(0);
-  const [allowance, setAllowance] = useState<{ callsLeft: number | null; callsPerDay: number; maxSeconds: number } | null>(null);
-  const call = useRef<VoiceCall | null>(null);
-
-  const live = state === "connecting" || state === "listening" || state === "thinking" || state === "speaking";
-
-  useEffect(() => {
-    if (!live) return;
-    const id = setInterval(() => setSeconds((s) => s + 1), 1000);
-    return () => clearInterval(id);
-  }, [live]);
-
-  // once the call is over, clear the last lines so the screen is clean for the next one
-  useEffect(() => {
-    if (state !== "ended") return;
-    const id = setTimeout(() => { setYou(""); setJarvis(""); }, 1800);
-    return () => clearTimeout(id);
-  }, [state]);
+  // the call itself lives in CallProvider, so leaving this page doesn't hang up
+  const { state, live, you, jarvis, error, muted, seconds, allowance, begin, end, toggleMute, levels } = useCall();
 
   useEffect(() => {
     warmUp(); // wake the server while you read the page
-    void prepareVoice(); // and have Jarvis's briefing ready before you tap
-    return () => call.current?.stop();
+    if (!live) void prepareVoice(); // and have Jarvis's briefing ready before you tap
   }, []);
 
-  async function begin() {
-    setError("");
-    setYou("");
-    setJarvis("");
-    setSeconds(0);
-    setMuted(false);
-    const c = new VoiceCall({
-      state: setState,
-      caption: (who, text) => (who === "you" ? setYou(text) : setJarvis(text)),
-      error: setError,
-      info: setAllowance,
-    });
-    call.current = c;
-    await c.start();
-  }
-
-  function end() {
-    call.current?.stop();
-  }
-
-  function toggleMute() {
-    const m = !muted;
-    setMuted(m);
-    call.current?.setMuted(m);
-  }
-
-  const clock = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+  const clock = clockOf(seconds);
 
   return (
     <div className={`voice-page state-${state}`}>
@@ -110,7 +63,7 @@ export default function Voice() {
       </aside>
 
       <div className="orb-wrap">
-        <Orb state={state} levels={() => call.current?.levels() ?? { you: 0, jarvis: 0 }} />
+        <Orb state={state} levels={levels} />
       </div>
 
       <div className="voice-status" aria-live="polite">{STATUS[state]}</div>
@@ -135,7 +88,7 @@ export default function Voice() {
             </button>
           </>
         ) : (
-          <button className="call-btn" onClick={begin} onPointerDown={() => void prepareVoice()}>
+          <button className="call-btn" onClick={() => void begin()} onPointerDown={() => void prepareVoice()}>
             <Icon name="mic" size={22} />
             {state === "ended" || state === "error" ? "Call again" : "Talk to Jarvis"}
           </button>
