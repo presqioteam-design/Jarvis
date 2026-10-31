@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   blockAddress, errorText, getDnc, getUsage, getEmails, getFinding, getSending, previewEmails, prioritiseCity, saveEmails, saveFinding,
   saveSending, skipCity, unblockAddress,
@@ -7,7 +8,7 @@ import {
 } from "../lib/api";
 import { categoryLabel } from "@jarvis/shared";
 import { timeAgo } from "../lib/format";
-import Icon from "../components/Icon";
+import Icon, { type IconName } from "../components/Icon";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -31,20 +32,44 @@ function runsPerDay(from: string, until: string): number {
   return min(until) >= first ? Math.floor((min(until) - first) / 30) + 1 : 0;
 }
 
+// one section at a time: only the open one loads, and the tab is kept in the address (?tab=)
+const SECTIONS: { key: string; label: string; icon: IconName; Body: () => React.ReactElement }[] = [
+  { key: "usage", label: "Usage", icon: "dashboard", Body: UsageSection },
+  { key: "sending", label: "Sending", icon: "mail", Body: SendingSection },
+  { key: "finding", label: "What to find", icon: "search", Body: FindingSection },
+  { key: "emails", label: "Emails", icon: "chat", Body: EmailsSection },
+  { key: "dnc", label: "Do not contact", icon: "ban", Body: DncSection },
+];
+
 export default function Settings() {
+  const [params, setParams] = useSearchParams();
+  const active = SECTIONS.find((t) => t.key === params.get("tab")) ?? SECTIONS[0];
+  const Body = active.Body;
+  const tabsRef = useRef<HTMLElement>(null);
+  // on a phone the chosen tab may be off to the side: bring it into view
+  useEffect(() => {
+    tabsRef.current?.querySelector(".active")?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [active.key]);
   return (
     <div className="page settings-page">
-      <header className="page-head">
+      <header className="settings-top">
         <div>
           <h1 className="title">Settings</h1>
           <p className="muted sub">Changes apply from Jarvis's next run, within 30 minutes. No redeploy needed.</p>
         </div>
+        <nav className="settings-tabs" role="tablist" aria-label="Settings sections" ref={tabsRef}>
+          {SECTIONS.map((t) => (
+            <button key={t.key} type="button" role="tab" aria-selected={t.key === active.key}
+              className={t.key === active.key ? "active" : ""} onClick={() => setParams(t.key === "usage" ? {} : { tab: t.key }, { replace: true })}>
+              <Icon name={t.icon} size={16} />
+              {t.label}
+            </button>
+          ))}
+        </nav>
       </header>
-      <UsageSection />
-      <SendingSection />
-      <FindingSection />
-      <EmailsSection />
-      <DncSection />
+      <div role="tabpanel" aria-label={active.label}>
+        <Body key={active.key} />
+      </div>
     </div>
   );
 }
@@ -735,8 +760,9 @@ function resetsIn(iso: string): string {
   const ms = new Date(iso).getTime() - Date.now();
   const at = new Date(iso).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true });
   if (ms <= 0) return "now";
-  const h = Math.floor(ms / 3600_000);
-  const m = Math.round((ms % 3600_000) / 60_000);
+  const total = Math.round(ms / 60_000);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
   return `in ${h ? `${h} h ` : ""}${h < 3 ? `${m} min ` : ""}(${at})`.replace("  ", " ");
 }
 
