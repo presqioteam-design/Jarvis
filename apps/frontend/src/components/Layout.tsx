@@ -6,7 +6,7 @@ import { CallProvider } from "../lib/call";
 
 const NAV: { to: string; label: string; icon: IconName; soon?: boolean }[] = [
   { to: "/dashboard", label: "Dashboard", icon: "dashboard" },
-  { to: "/campaigns", label: "Find hotels", icon: "campaign" },
+  { to: "/campaigns", label: "Find businesses", icon: "campaign" },
   { to: "/leads", label: "Leads", icon: "leads" },
   { to: "/voice", label: "Talk to Jarvis", icon: "mic" },
   { to: "/chat", label: "Ask Jarvis", icon: "chat" },
@@ -16,7 +16,7 @@ const NAV: { to: string; label: string; icon: IconName; soon?: boolean }[] = [
 /** Phone tab bar: Jarvis sits in the middle as the raised main button, like an app's home action. */
 const TABS: { to: string; label: string; icon: IconName }[] = [
   { to: "/dashboard", label: "Home", icon: "dashboard" },
-  { to: "/campaigns", label: "Hotels", icon: "campaign" },
+  { to: "/campaigns", label: "Find", icon: "campaign" },
   { to: "/leads", label: "Leads", icon: "leads" },
   { to: "/chat", label: "Chat", icon: "chat" },
 ];

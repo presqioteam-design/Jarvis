@@ -3,9 +3,9 @@ import { signInWithGoogle } from "../lib/auth";
 import Icon, { Logo, type IconName } from "../components/Icon";
 
 const FEATURES: { icon: IconName; title: string; text: string }[] = [
-  { icon: "search", title: "Finds hotels", text: "Searches any area and collects phone numbers, emails and websites." },
+  { icon: "search", title: "Finds businesses", text: "Hotels, hospitals, schools, restaurants and more: searches any area and keeps the ones with an email." },
   { icon: "mail", title: "Reaches out", text: "Sends personalised emails about Presqio and follows up on its own." },
-  { icon: "bolt", title: "Keeps you posted", text: "Sorts replies and alerts you on Telegram when a hotel is interested." },
+  { icon: "bolt", title: "Keeps you posted", text: "Sorts replies and alerts you on Telegram when someone is interested." },
 ];
 
 export default function Login() {

@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..deps import require_user
-from ..services import leads
+from ..services import categories, leads
 
 router = APIRouter(tags=["campaigns"], dependencies=[Depends(require_user)])
 
@@ -12,6 +12,7 @@ router = APIRouter(tags=["campaigns"], dependencies=[Depends(require_user)])
 class CampaignIn(BaseModel):
     place: str = Field(min_length=2, max_length=120)         # "Hyderabad" or "Madhapur, Hyderabad"
     radiusKm: float | None = Field(default=None, ge=0.5, le=10)   # None = whole city
+    category: str = categories.DEFAULT                              # one of categories.CATEGORIES keys
 
 
 class StatusIn(BaseModel):
@@ -22,10 +23,12 @@ class StatusIn(BaseModel):
 @router.post("/campaigns")
 async def create_campaign(body: CampaignIn, background: BackgroundTasks):
     """Starts the scan and returns at once; the dashboard watches the campaign in Firestore."""
+    if body.category not in categories.BY_KEY:
+        raise HTTPException(422, "Unknown business category")
     radius = int(body.radiusKm * 1000) if body.radiusKm else None
     if reason := leads.scan_blocked(whole_city=radius is None):
         raise HTTPException(429, reason)
-    campaign_id = leads.create_campaign(body.place.strip(), radius)
+    campaign_id = leads.create_campaign(body.place.strip(), radius, body.category)
     background.add_task(leads.run_campaign, campaign_id)
     return {"id": campaign_id}
 
@@ -46,12 +49,13 @@ async def set_status(body: StatusIn):
 class ApproveAllIn(BaseModel):
     city: str
     area: str | None = None
+    category: str | None = None
 
 
 @router.post("/leads/approve-all")
 async def approve_all(body: ApproveAllIn):
-    """Approve every hotel with an email that's waiting for review, in a city or one area."""
-    return {"approved": leads.approve_all_with_email(body.city, body.area)}
+    """Approve every business with an email that's waiting for review, in a city or one area."""
+    return {"approved": leads.approve_all_with_email(body.city, body.area, body.category)}
 
 
 @router.post("/leads/{lead_id}/block")

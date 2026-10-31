@@ -6,13 +6,30 @@
 
 export type Language = "en" | "hi" | "te";
 
+/** Kinds of business Jarvis finds; keep in sync with apps/api/app/services/categories.py */
+export const CATEGORIES = [
+  { key: "hotels", label: "Hotels" },
+  { key: "hospitals", label: "Hospitals & clinics" },
+  { key: "schools", label: "Schools & colleges" },
+  { key: "restaurants", label: "Restaurants & cafés" },
+  { key: "factories", label: "Factories & warehouses" },
+  { key: "retail", label: "Supermarkets & retail" },
+  { key: "security", label: "Security agencies" },
+  { key: "gyms", label: "Gyms, salons & spas" },
+  { key: "coaching", label: "Coaching & training centres" },
+] as const;
+export type CategoryKey = (typeof CATEGORIES)[number]["key"];
+/** Leads saved before categories existed are hotels. */
+export const categoryLabel = (key?: string) => CATEGORIES.find((c) => c.key === key)?.label ?? "Hotels";
+
 /** users/{uid}/campaigns/{id} — one scan: a whole city, or a square around a spot */
 export interface Campaign {
   name: string;
   kind?: "city" | "area";
   city?: string;                 // set once the place is found on the map
   area: { label: string; lat: number; lon: number; radiusM: number };   // radiusM 0 = whole city
-  query: string;                 // what to search for, e.g. "hotel"
+  query: string;                 // what to search for, e.g. "hotels"
+  category?: CategoryKey;        // missing on scans from before categories: hotels
   status: "searching" | "ready" | "failed" | "active" | "paused" | "done";
   error?: string;                // set when status is "failed"
   createdAt: string;
@@ -28,6 +45,7 @@ export interface AreaSummary {
   withEmail: number;
   withPhone: number;
   statuses: Partial<Record<LeadStatus, number>>;
+  categories?: Partial<Record<CategoryKey, number>>;   // missing on old summaries: all hotels
 }
 
 /** users/{uid}/cities/{city-slug} — totals per city and per area, kept by the API.
@@ -55,7 +73,7 @@ export type LeadStatus =
   | "unsubscribed"
   | "bounced";
 
-/** users/{uid}/leads/{id} — one hotel. id = "{source}_{sourceId}" so re-imports don't duplicate */
+/** users/{uid}/leads/{id} — one business with an email. id = "{source}_{sourceId}" so re-imports don't duplicate */
 export interface Lead {
   campaignId: string;
   name: string;
@@ -63,6 +81,7 @@ export interface Lead {
   city?: string;
   area?: string;                 // locality, e.g. "Madhapur"
   areaKey?: string;              // "hyderabad--madhapur"
+  category?: CategoryKey;        // missing on old leads: hotels
   lat: number;
   lon: number;
   phone?: string;

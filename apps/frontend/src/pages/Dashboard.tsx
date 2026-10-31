@@ -111,7 +111,7 @@ export default function Dashboard() {
       )}
 
       <section className="kpis" aria-label="Pipeline totals">
-        <Kpi icon="leads" label="Hotels found" value={total} note={total ? `${counts.found.toLocaleString()} not contacted yet` : "Scan your city"} />
+        <Kpi icon="leads" label="Businesses found" value={total} note={total ? `${counts.found.toLocaleString()} not contacted yet` : "Scan your city"} />
         <Kpi icon="mail" label="Contacted" value={contacted} note={`${percent(contacted, total)} of leads`} />
         <Kpi icon="reply" label="Replies" value={responded} note={`${percent(responded, contacted)} reply rate`} />
         <Kpi icon="star" label="Interested" value={counts.interested + counts.customer} note={`${counts.customer} customers`} accent />
@@ -120,7 +120,7 @@ export default function Dashboard() {
       <section className="card">
         <div className="card-head">
           <h2>Pipeline</h2>
-          <span className="muted small">{total.toLocaleString()} hotels</span>
+          <span className="muted small">{total.toLocaleString()} businesses</span>
         </div>
         <div className="funnel" role="img" aria-label="Leads by stage">
           {total === 0 ? (
@@ -151,7 +151,7 @@ export default function Dashboard() {
               <h2>Needs your attention</h2>
             </div>
             {attention.length === 0 ? (
-              <p className="empty">No replies waiting. Jarvis will alert you on Telegram when a hotel answers.</p>
+              <p className="empty">No replies waiting. Jarvis will alert you on Telegram when someone answers.</p>
             ) : (
               <ul className="list panel-body">
                 {attention.map((l) => (
@@ -208,8 +208,8 @@ function GettingStarted() {
   const steps = [
     { done: true, title: "Sign in to the dashboard", text: "You're in." },
     { done: true, title: "Connect the database", text: "Firestore rules are published." },
-    { done: false, title: "Create your first campaign", text: "Pick an area like Madhapur and let Jarvis find hotels." },
-    { done: false, title: "Approve leads", text: "Choose which hotels Jarvis should email." },
+    { done: false, title: "Create your first campaign", text: "Pick a kind of business and an area like Madhapur; Jarvis finds the ones with an email." },
+    { done: false, title: "Approve leads", text: "Choose which businesses Jarvis should email." },
   ];
   return (
     <section className="card">

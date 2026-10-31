@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   collection, doc, documentId, getDocs, limit, onSnapshot, query, startAfter, where, type QueryDocumentSnapshot,
 } from "firebase/firestore";
-import type { AreaSummary, Campaign, CitySummary, Lead, LeadStatus } from "@jarvis/shared";
+import { CATEGORIES, categoryLabel, type AreaSummary, type Campaign, type CitySummary, type Lead, type LeadStatus } from "@jarvis/shared";
 import { db, userPath } from "../lib/firebase";
 import { approveAllWithEmail, blockLead, errorText, setLeadStatus } from "../lib/api";
 import { useUser } from "../lib/auth";
@@ -17,7 +17,6 @@ const TABS: { key: string; label: string; statuses: LeadStatus[] }[] = [
   { key: "review", label: "To review", statuses: ["new"] },
   { key: "ready", label: "Approved", statuses: ["ready"] },
   { key: "contacted", label: "Contacted", statuses: ["emailed", "replied", "interested", "demo", "customer"] },
-  { key: "none", label: "No contact", statuses: ["no_contact"] },
   { key: "blocked", label: "Blocked", statuses: ["unsubscribed", "not_interested", "bounced"] },
   { key: "all", label: "All", statuses: ALL },
 ];
@@ -31,14 +30,14 @@ const STATUS_TEXT: Record<LeadStatus, string> = {
 const PAGE_SIZE = 20;
 
 /**
- * Pages are fetched with equality filters only (status, hasEmail, area), one
- * "phase" at a time: every status of the tab, hotels with email before those
- * without. Equality-only queries need no composite index in Firestore.
+ * Pages are fetched with equality filters only (status, hasEmail, area, category), one
+ * "phase" (status) of the tab at a time. Equality-only queries need no composite index
+ * in Firestore. Only businesses with an email are saved, so only those are asked for.
  */
 type Phase = { status: LeadStatus; hasEmail: boolean };
 
-/** One hotel in the city's search list (built by the API): id, name, email, phone, area. */
-type Entry = { i: string; n: string; e: string; p: string; a: string };
+/** One business in the city's search list (built by the API): id, name, email, phone, area, category. */
+type Entry = { i: string; n: string; e: string; p: string; a: string; c?: string };
 
 /** Matches any part of the name, email or area; for numbers, any part of the phone (with or without +91). */
 function matches(e: Entry, words: string[], digits: string): boolean {
@@ -73,11 +72,12 @@ export default function Leads() {
   const tab = TABS.find((t) => t.key === (params.get("tab") ?? "review")) ?? TABS[0];
   const city = params.get("city") ?? cities[0] ?? "";
   const area = params.get("area") ?? "";
+  const category = params.get("category") ?? "";
   const areas: AreaSummary[] = useMemo(
     () => Object.values(summary?.areas ?? {}).sort((a, b) => a.area.localeCompare(b.area)),
     [summary],
   );
-  const phases: Phase[] = useMemo(() => [true, false].flatMap((hasEmail) => tab.statuses.map((status) => ({ status, hasEmail }))), [tab]);
+  const phases: Phase[] = useMemo(() => tab.statuses.map((status) => ({ status, hasEmail: true })), [tab]);
 
   const onError = useCallback((e: { code?: string }) => {
     setError(e.code === "resource-exhausted"
@@ -128,13 +128,13 @@ export default function Leads() {
     if (!typed || !index) return [];
     const words = typed.split(/\s+/).filter(Boolean);
     const digits = typed.replace(/\D/g, "");
-    return index.filter((e) => (!area || e.a === area) && matches(e, words, digits));
-  }, [typed, index, area]);
+    return index.filter((e) => (!area || e.a === area) && (!category || (e.c ?? "hotels") === category) && matches(e, words, digits));
+  }, [typed, index, area, category]);
 
   useEffect(() => {
     setVisible(PAGE_SIZE);
     listRef.current?.scrollTo({ top: 0 });
-  }, [typed, area]);
+  }, [typed, area, category]);
 
   // fetch full details only for the results on screen (30 ids per query is Firestore's limit for "in")
   useEffect(() => {
@@ -174,6 +174,7 @@ export default function Leads() {
           where("status", "==", p.status),
           where("hasEmail", "==", p.hasEmail),
           ...(area ? [where("areaKey", "==", areaKey(city, area))] : []),
+          ...(category ? [where("category", "==", category)] : []),
           ...(c.last ? [startAfter(c.last)] : []),
           limit(wanted),
         ));
@@ -194,7 +195,7 @@ export default function Leads() {
     } finally {
       if (gen === generation.current) setLoading(false);
     }
-  }, [loading, city, area, phases, user.uid, onError]);
+  }, [loading, city, area, category, phases, user.uid, onError]);
 
   // new filters: start again from the first page
   useEffect(() => {
@@ -204,7 +205,7 @@ export default function Leads() {
     setLoading(false);
     setError("");
     listRef.current?.scrollTo({ top: 0 });
-  }, [city, area, tab.key]);
+  }, [city, area, category, tab.key]);
 
   // fetch the next page whenever the bottom of the list scrolls into view
   useEffect(() => {
@@ -225,6 +226,11 @@ export default function Leads() {
   // counts come from the city summary, so they cover every lead, not just loaded ones
   const counted = area ? areas.filter((a) => a.area === area) : areas;
   const tabCount = (st: LeadStatus[]) => counted.reduce((n, a) => n + st.reduce((m, s) => m + (a.statuses[s] ?? 0), 0), 0);
+  // businesses per category, for the filter (summaries from before categories count as hotels)
+  const perCategory = counted.reduce<Record<string, number>>((acc, a) => {
+    Object.entries(a.categories ?? { hotels: a.total }).forEach(([k, n]) => (acc[k] = (acc[k] ?? 0) + (n ?? 0)));
+    return acc;
+  }, {});
   const reviewWithEmail = rows.filter((l) => l.status === "new" && l.emails.length).length;
 
   const setParam = (updates: Record<string, string>) => {
@@ -253,14 +259,15 @@ export default function Leads() {
   }
 
   async function approveAll() {
+    const what = category ? categoryLabel(category).toLowerCase() : "businesses";
     const where = area ? ` in ${area}` : ` in ${city}`;
-    if (!confirm(`Approve every hotel with an email${where} that's waiting for review?`)) return;
+    if (!confirm(`Approve every one of the ${what} with an email${where} that's waiting for review?`)) return;
     setWorking(true);
     setError("");
     try {
-      const { approved } = await approveAllWithEmail(city, area || null);
+      const { approved } = await approveAllWithEmail(city, area || null, category || null);
       setRows((r) => r.filter((l) => !(l.status === "new" && l.emails.length)));
-      alert(`Approved ${approved} hotels${where}.`);
+      alert(`Approved ${approved} ${what}${where}.`);
     } catch (e) {
       setError(errorText(e, "Couldn't approve. Check your connection and try again."));
     } finally {
@@ -283,7 +290,7 @@ export default function Leads() {
       <header className="page-head">
         <div>
           <h1 className="title">Leads</h1>
-          <p className="muted sub">Approved hotels are emailed first when you tell Jarvis to send. Blocked hotels are never contacted.</p>
+          <p className="muted sub">Approved businesses are emailed first when you tell Jarvis to send. Blocked ones are never contacted.</p>
         </div>
         {tab.key === "review" && reviewWithEmail > 0 && (
           <button className="btn primary" onClick={approveAll} disabled={working}>
@@ -305,13 +312,20 @@ export default function Leads() {
         <select id="lead-area" className="input" value={area} onChange={(e) => setParam({ area: e.target.value })} disabled={areas.length === 0}>
           <option value="">{areas.length ? `All areas (${areas.length})` : "Areas not ready yet"}</option>
           {areas.map((a) => (
-            <option key={a.area} value={a.area}>{a.area} · {a.total} hotels{a.withEmail ? ` · ${a.withEmail} email` : ""}</option>
+            <option key={a.area} value={a.area}>{a.area} · {a.total}</option>
+          ))}
+        </select>
+        <label className="sr-only" htmlFor="lead-category">Kind of business</label>
+        <select id="lead-category" className="input" value={category} onChange={(e) => setParam({ category: e.target.value })}>
+          <option value="">All businesses</option>
+          {CATEGORIES.map((c) => (
+            <option key={c.key} value={c.key}>{c.label}{perCategory[c.key] ? ` · ${perCategory[c.key]}` : ""}</option>
           ))}
         </select>
         <div className="search-box">
           <Icon name="search" size={16} />
-          <label className="sr-only" htmlFor="lead-search">Search hotels by name, email or phone</label>
-          <input id="lead-search" className="input" placeholder={`Search ${city || "hotels"} by name, email or phone…`} autoComplete="off"
+          <label className="sr-only" htmlFor="lead-search">Search businesses by name, email or phone</label>
+          <input id="lead-search" className="input" placeholder={`Search ${city || "businesses"} by name, email or phone…`} autoComplete="off"
             value={search} onChange={(e) => setSearch(e.target.value)} onFocus={loadIndex}
             onKeyDown={(e) => e.key === "Escape" && setSearch("")} />
           {search && (
@@ -323,14 +337,16 @@ export default function Leads() {
       {searching ? (
         <p className="muted small search-note" aria-live="polite">
           {indexLoading || !index
-            ? "Getting the hotel list ready…"
+            ? "Getting the list ready…"
             : `${hits.length.toLocaleString()} ${hits.length === 1 ? "match" : "matches"}${area ? ` in ${area}` : ` in ${city}`}, any status. Press Esc to clear.`}
         </p>
       ) : (
       <div className="tabs" role="tablist">
         {TABS.map((t) => (
           <button key={t.key} role="tab" aria-selected={tab.key === t.key} className={`tab ${tab.key === t.key ? "active" : ""}`} onClick={() => setParam({ tab: t.key === "review" ? "" : t.key })}>
-            {t.label} <span className="count">{tabCount(t.statuses).toLocaleString()}</span>
+            {t.label}
+            {/* per-status counts aren't kept per category, so they show only without a category filter */}
+            {!category && <span className="count">{tabCount(t.statuses).toLocaleString()}</span>}
           </button>
         ))}
       </div>
@@ -339,7 +355,7 @@ export default function Leads() {
       <section className="card table-card">
         <div className="lead-scroll" ref={listRef}>
           {searching && !searchPending && hits.length === 0 ? (
-            <p className="empty">No hotel matches “{search.trim()}”. Try part of the name, the email, or the last digits of the phone.</p>
+            <p className="empty">Nothing matches “{search.trim()}”. Try part of the name, the email, or the last digits of the phone.</p>
           ) : !searching && shown.length === 0 && !loading && cursor.current.done ? (
             <p className="empty">Nothing here.</p>
           ) : (
@@ -347,7 +363,7 @@ export default function Leads() {
               {shown.map((l) => (
                 <li key={l.id} className="lead">
                   <div className="lead-main">
-                    <div className="list-title">{l.name}</div>
+                    <div className="list-title">{l.name} <span className="cat-tag">{categoryLabel(l.category)}</span></div>
                     <div className="muted small ellipsis">{[l.area, l.address].filter(Boolean).join(" · ") || "No address"}</div>
                   </div>
                   <div className="lead-contact small">

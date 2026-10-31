@@ -26,6 +26,10 @@ AGGREGATORS = (
     "oyorooms.com", "oyohotels.com", "fabhotels.com", "treebo", "staybloom.com", "zostel.com", "goibibo.com",
     "makemytrip.com", "booking.com", "agoda.com", "airbnb.", "expedia.", "tripadvisor.", "trivago.", "cleartrip.com",
     "weddingz.in", "stanzaliving.com", "justdial.com", "sulekha.com",
+    # listing sites and social pages for the other categories: the address reaches the platform
+    "zomato.com", "swiggy.com", "magicpin.in", "dineout.co.in", "eazydiner.com", "practo.com", "lybrate.com",
+    "shiksha.com", "collegedunia.com", "indiamart.com", "tradeindia.com", "facebook.com", "instagram.com",
+    "linktr.ee", "wa.me", "whatsapp.com", "youtube.com", "twitter.com", "linkedin.com",
 )
 
 

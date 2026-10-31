@@ -1,20 +1,23 @@
 """
-Where hotels come from: TomTom (main) and OpenStreetMap (backup).
+Where businesses come from: TomTom (main) and OpenStreetMap (backup), one category at a time.
 Each source returns plain dicts with the Lead fields it knows about.
 """
 
+import asyncio
 import logging
 import re
 
 import httpx
 
 from ..config import get_settings
+from . import categories
+from .categories import Category
 
 log = logging.getLogger(__name__)
 
 TOMTOM = "https://api.tomtom.com/search/2"
-HOTEL_CATEGORY = "7314"  # TomTom "Hotel/Motel", includes guest houses and serviced apartments
-OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter"]
+OVERPASS = ["https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass-api.de/api/interpreter",
+            "https://overpass.private.coffee/api/interpreter"]
 
 
 async def geocode(place: str) -> dict:
@@ -39,57 +42,64 @@ async def geocode(place: str) -> dict:
     }
 
 
-async def tomtom_box(client: httpx.AsyncClient, box: dict) -> list[dict]:
-    """Hotels inside one box. TomTom caps a search at 100 results, so a full page means: split the box."""
-    r = await client.get(
-        f"{TOMTOM}/categorySearch/hotel.json",
-        params={
-            "key": get_settings().tomtom_api_key, "categorySet": HOTEL_CATEGORY, "countrySet": "IN", "limit": 100,
-            "topLeft": f"{box['n']},{box['w']}", "btmRight": f"{box['s']},{box['e']}",
-        },
-    )
-    r.raise_for_status()
-    out = []
-    for x in r.json().get("results", []):
-        poi, addr = x.get("poi", {}), x.get("address", {})
-        out.append({
-            "id": f"tomtom_{x['id']}",
-            "source": "tomtom",
-            "name": poi.get("name", "").strip(),
-            "address": addr.get("freeformAddress", ""),
-            "area": addr.get("municipalitySubdivision") or addr.get("municipalitySecondarySubdivision") or addr.get("municipality") or "",
-            "lat": x["position"]["lat"],
-            "lon": x["position"]["lon"],
-            "phone": clean_phone(poi.get("phone", "")),
-            "website": clean_url(poi.get("url", "")),
-            "emails": [],
-        })
-    return out
+async def tomtom_box(client: httpx.AsyncClient, box: dict, cat: Category) -> tuple[list[dict], bool]:
+    """One category inside one box -> (places, full). TomTom caps a search at 100 results,
+    so `full` (any search came back with 100) means: split the box."""
+    params = {"key": get_settings().tomtom_api_key, "countrySet": "IN", "limit": 100,
+              "topLeft": f"{box['n']},{box['w']}", "btmRight": f"{box['s']},{box['e']}"}
+    out, full = {}, False
+    for word, ids in cat.tomtom:
+        if ids:
+            r = await client.get(f"{TOMTOM}/categorySearch/{word}.json", params={**params, "categorySet": ids})
+        else:   # no TomTom category for it: search by name inside the box
+            r = await client.get(f"{TOMTOM}/poiSearch/{word}.json", params=params)
+        r.raise_for_status()
+        results = r.json().get("results", [])
+        full = full or len(results) >= 100
+        for x in results:
+            poi, addr = x.get("poi", {}), x.get("address", {})
+            name = poi.get("name", "").strip()
+            if cat.name_must and not re.search(cat.name_must, name, re.I):
+                continue
+            out[f"tomtom_{x['id']}"] = {
+                "id": f"tomtom_{x['id']}",
+                "source": "tomtom",
+                "name": name,
+                "address": addr.get("freeformAddress", ""),
+                "area": addr.get("municipalitySubdivision") or addr.get("municipalitySecondarySubdivision") or addr.get("municipality") or "",
+                "lat": x["position"]["lat"],
+                "lon": x["position"]["lon"],
+                "phone": clean_phone(poi.get("phone", "")),
+                "website": clean_url(poi.get("url", "")),
+                "emails": [],
+                "category": cat.key,
+            }
+    return list(out.values()), full
 
 
-async def osm_hotels(box: dict) -> list[dict]:
-    """OpenStreetMap via Overpass. Slow and often busy, so failures return []."""
-    query = (
-        f'[out:json][timeout:90];nwr["tourism"~"^(hotel|guest_house|motel|hostel)$"]'
-        f"({box['s']},{box['w']},{box['n']},{box['e']});out center tags;"
-    )
-    for url in OVERPASS:
-        try:
-            async with httpx.AsyncClient(timeout=100) as client:
-                r = await client.post(url, data={"data": query}, headers={"User-Agent": "presqio-jarvis/0.1"})
-                r.raise_for_status()
-                elements = r.json()["elements"]
-            break
-        except Exception as e:
-            log.warning("Overpass %s failed: %s", url, type(e).__name__)
-    else:
+OSM_BUDGET_S = 150   # public Overpass servers are often busy: give up after this
+
+
+async def osm_places(box: dict, cats: list[Category]) -> list[dict]:
+    """Named places of these categories from OpenStreetMap (one query for all). Failures return []."""
+    rules = [(k, rx) for c in cats for k, rx in c.osm]
+    if not rules:
+        return []
+    bbox = f"({box['s']},{box['w']},{box['n']},{box['e']})"
+    query = "[out:json][timeout:90];(" + "".join(f'nwr["{k}"~"{rx}"]["name"]{bbox};' for k, rx in rules) + ");out center tags;"
+    task = asyncio.ensure_future(_overpass(query))
+    done, _ = await asyncio.wait({task}, timeout=OSM_BUDGET_S)   # walk away from a stuck server at once
+    if task not in done or task.exception():
+        task.cancel()
+        log.warning("OpenStreetMap unavailable; using the map search only")
         return []
 
     out = []
-    for e in elements:
+    for e in task.result():
         tags = e.get("tags", {})
         name = tags.get("name", "").strip()
-        if not name:
+        cat = categories.from_osm_tags(tags, cats)
+        if not name or not cat:
             continue
         pos = e.get("center") or e
         email = tags.get("email") or tags.get("contact:email") or ""
@@ -104,9 +114,22 @@ async def osm_hotels(box: dict) -> list[dict]:
             "lon": pos["lon"],
             "phone": clean_phone(tags.get("phone") or tags.get("contact:phone") or ""),
             "website": clean_url(tags.get("website") or tags.get("contact:website") or ""),
-            "emails": [email.lower()] if email else [],
+            "emails": [m.strip().lower() for m in re.split(r"[;,]", email) if "@" in m][:3],
+            "category": cat.key,
         })
     return out
+
+
+async def _overpass(query: str) -> list[dict]:
+    async with httpx.AsyncClient(timeout=100, headers={"User-Agent": "presqio-jarvis/0.1"}) as client:
+        for url in OVERPASS:
+            try:
+                r = await client.post(url, data={"data": query})
+                if r.status_code == 200:
+                    return r.json()["elements"]
+            except (httpx.HTTPError, ValueError) as e:
+                log.warning("Overpass %s failed: %s", url, type(e).__name__)
+    raise RuntimeError("OpenStreetMap servers are busy")
 
 
 def clean_phone(raw: str) -> str:

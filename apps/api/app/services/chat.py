@@ -1,6 +1,6 @@
 """
 Talk to Jarvis from Telegram or the dashboard. Jarvis answers from live data
-and can act: send emails, send follow-ups, or scan a place for hotels.
+and can act: send emails, send follow-ups, or scan a place for businesses.
 """
 
 import asyncio
@@ -15,7 +15,7 @@ from google.api_core.exceptions import ResourceExhausted
 from ..config import get_settings
 from ..firebase import col
 from ..timeutil import now_local, now_utc
-from . import activity, explore, inbox, leads, llm, outreach, presqio, report, telegram, usage, voice
+from . import activity, categories, explore, inbox, leads, llm, outreach, presqio, report, telegram, usage, voice
 
 log = logging.getLogger(__name__)
 _tasks: set[asyncio.Task] = set()   # keep background scans alive
@@ -26,7 +26,8 @@ QUOTA_MESSAGE = (
     "They reset at midnight US Pacific time (about 12:30 PM IST). Sending and answering will work again then."
 )
 
-SYSTEM = """You are Jarvis, the sales assistant for Presqio. You find hotels, email them about Presqio,
+SYSTEM = """You are Jarvis, the sales assistant for Presqio. You find businesses (hotels, hospitals, schools, restaurants,
+factories, stores, security agencies, gyms and salons, coaching centres), email them about Presqio,
 track replies and report to the admin (the Presqio owner) you are talking to. Call the admin "Boss" now and then.
 
 Reply with a JSON object only:
@@ -42,7 +43,7 @@ or, when the admin clearly asks you to do something, one of these actions:
 {{"reply": "...", "action": {{"name": "approve", "numbers": [<numbers from the last list>]}}}}
 {{"reply": "...", "action": {{"name": "approve_all", "area": "<locality or null for the whole city>"}}}}
 {{"reply": "...", "action": {{"name": "block", "numbers": [<numbers from the last list>]}}}}
-{{"reply": "...", "action": {{"name": "scan", "place": "<city, or area and city>", "radius_km": <number or null for a whole city>}}}}
+{{"reply": "...", "action": {{"name": "scan", "place": "<city, or area and city>", "radius_km": <number or null for a whole city>, "category": "<{category_keys}>"}}}}
 
 Rules:
 - Only act when asked. If they ask to send emails without saying how many, ask how many (action null).
@@ -52,7 +53,8 @@ Rules:
 - "show / list leads (in X)" -> list_leads. status "new" means waiting for review (the default), "ready" means approved.
 - "approve 1 3 5" or "block 2" refer to the numbers in the LAST LIST below. "approve all (with email) in X" -> approve_all.
 - Never more than 50 emails per request.
-- Answer questions from the DATA below; never invent hotels, numbers or replies. If the data doesn't have it, say so.
+- A scan searches one category; if they don't say which, use "hotels".
+- Answer questions from the DATA below; never invent businesses, numbers or replies. If the data doesn't have it, say so.
 - Keep replies short: 1-4 sentences, or a short list. Plain text, no markdown tables.
 - If asked about Presqio itself, use only the PRODUCT FACTS.
 
@@ -69,9 +71,14 @@ def context_block() -> str:
     pipeline = ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "no leads yet"
     all_areas = leads.areas()
     areas = sorted(all_areas, key=lambda a: -a["total"])[:30]
+    by_cat: dict[str, int] = {}
+    for a in all_areas:
+        for k, n in (a.get("categories") or {"hotels": a["total"]}).items():
+            by_cat[k] = by_cat.get(k, 0) + n
+    cat_line = ", ".join(f"{categories.get(k).label} {n}" for k, n in sorted(by_cat.items(), key=lambda t: -t[1])) or "none yet"
     most_email = ", ".join(f"{a['area']} {a['withEmail']}" for a in sorted(all_areas, key=lambda a: -a["withEmail"])[:10] if a["withEmail"]) or "none"
     area_lines = "\n".join(
-        f"- {a['area']} ({a['city']}): {a['total']} hotels, {a['withEmail']} with email, {a['withPhone']} with phone, "
+        f"- {a['area']} ({a['city']}): {a['total']} businesses, {a['withEmail']} with email, "
         f"emailed {a['statuses'].get('emailed', 0)}, replied {a['statuses'].get('replied', 0)}, interested {a['statuses'].get('interested', 0)}"
         for a in areas
     ) or "- none yet"
@@ -81,7 +88,8 @@ def context_block() -> str:
     recent_lines = "\n".join(f"- {a['at'][:16].replace('T', ' ')} UTC: {a['text']}" for a in recent) or "- nothing yet"
     camps = col("campaigns").order_by("createdAt", direction=firestore.Query.DESCENDING).limit(5).stream()
     camp_lines = "\n".join(
-        f"- {c.get('name')}: {c.get('status')}, {c.get('scan', {}).get('found', c['stats']['found'])} hotels found"
+        f"- {c.get('name')} ({categories.get(c.get('category')).label.lower()}): {c.get('status')}, "
+        f"{c.get('scan', {}).get('found', c['stats']['found'])} found"
         for c in (d.to_dict() for d in camps)
     ) or "- none"
     return (
@@ -91,6 +99,7 @@ def context_block() -> str:
         f"AUTO-SEND: {'on' if outreach.auto_enabled() else 'paused'} ({outreach.auto_window()})\n"
         f"GEMINI USAGE TODAY: {usage.summary()}\n"
         f"NIGHT EXPLORER: {explore.status().replace(chr(10), ' ')}\n\n"
+        f"BY CATEGORY: {cat_line}\n"
         f"MOST EMAILS (sorted): {most_email}\n\n"
         f"AREAS (biggest first):\n{area_lines}\n\n"
         f"NEEDS ATTENTION:\n{hot_lines}\n\n"
@@ -146,7 +155,7 @@ HELP = """Here's what you can tell me:
 (Runs every 30 min, 10 AM–2 PM Mon–Sat; I message you after every batch.)
 
 📤 Sending by hand (any time, on top of auto)
-• send 10 — email 10 hotels (approved ones first)
+• send 10 — email 10 businesses (approved ones first)
 • send 5 in Hitech City — only that area
 • send follow ups — follow-ups that are due (day 3 and day 7)
 • check replies — read the inbox now (I also check every 10 min)
@@ -157,9 +166,10 @@ HELP = """Here's what you can tell me:
 • approve 1 3 5 / block 2 — numbers from the last list
 • approve all with email in Banjara Hills
 
-🔎 Finding hotels
-• scan Gachibowli 2km — search around a spot
-• scan Vijayawada — a whole city
+🔎 Finding businesses (only ones with an email are saved)
+• scan hospitals in Gachibowli 2km — search around a spot
+• scan schools in Vijayawada — a whole city
+Categories: hotels, hospitals, schools, restaurants, factories, retail, security, gyms, coaching
 
 ❓ Questions, e.g.
 • how many emails did we send today?
@@ -167,7 +177,7 @@ HELP = """Here's what you can tell me:
 • which area has the most emails?
 • what does Presqio cost? (I'll say: call us)
 
-🌍 Night explorer (finds new hotels 12:30–5 AM, report in the morning)
+🌍 Night explorer (finds new businesses of every category 12:30–5 AM, report in the morning)
 • explore status · pause explore / resume explore
 • explore Pune next — put a city first in line
 
@@ -175,7 +185,7 @@ HELP = """Here's what you can tell me:
 📈 usage — today's AI and voice usage against the daily limits
 🎙 You can send me voice notes too.
 
-I'll message you by myself when a hotel replies, after every batch, and at 7 PM with the daily report."""
+I'll message you by myself when a business replies, after every batch, and at 7 PM with the daily report."""
 
 # Core commands are matched by pattern, not left to the AI, so they always behave the same.
 COMMANDS = [
@@ -218,7 +228,8 @@ async def handle(text: str, channel: str) -> tuple[str, bool]:
         return reply, started
 
     history = recent_history()
-    system = SYSTEM.format(facts=presqio.FACTS, now=now_local().strftime("%A %d %b %Y, %H:%M"))
+    system = SYSTEM.format(facts=presqio.FACTS, now=now_local().strftime("%A %d %b %Y, %H:%M"),
+                           category_keys="|".join(c.key for c in categories.CATEGORIES))
     messages = [*history, {"role": "user", "content": f"DATA:\n{context_block()}\n\nADMIN: {text}"}]
     raw = await llm.complete(system, messages, max_tokens=1200, json=True)
     try:
@@ -315,11 +326,13 @@ def run_action(action: dict) -> tuple[bool, str]:
         radius = action.get("radius_km")
         if reason := leads.scan_blocked(whole_city=not radius):
             return False, f"⚠️ {reason}"
-        campaign_id = leads.create_campaign(place, int(float(radius) * 1000) if radius else None)
+        cat = categories.find(str(action.get("category") or "")) or categories.get(None)
+        campaign_id = leads.create_campaign(place, int(float(radius) * 1000) if radius else None, cat.key)
         task = asyncio.create_task(leads.run_campaign(campaign_id))
         _tasks.add(task)
         task.add_done_callback(_tasks.discard)
-        return False, f"🔎 Scanning {place} for hotels. This can take a while; I'll message you when it's done."
+        return False, (f"🔎 Scanning {place} for {cat.label.lower()} (only ones with an email are saved). "
+                       "This can take a while; I'll message you when it's done.")
     return False, ""
 
 

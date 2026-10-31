@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { collection, doc, limit, onSnapshot, orderBy, query } from "firebase/firestore";
-import type { AreaSummary, Campaign, CitySummary } from "@jarvis/shared";
+import { CATEGORIES, categoryLabel, type AreaSummary, type Campaign, type CategoryKey, type CitySummary } from "@jarvis/shared";
 import { db, userPath } from "../lib/firebase";
 import { errorText, resumeScan, scanPlace } from "../lib/api";
 import { useUser } from "../lib/auth";
@@ -9,13 +9,13 @@ import { slug, timeAgo } from "../lib/format";
 import Icon from "../components/Icon";
 
 type Row = Campaign & { id: string };
-type SortKey = "area" | "total" | "withEmail" | "withPhone" | "emailed" | "replied";
+type SortKey = "area" | "total" | "withEmail" | "emailed" | "replied";
 
 const RADII = [1, 2, 3, 5, 8];
 const PHASE: Record<string, string> = {
   map: "Searching the map square by square",
-  osm: "Adding hotels from OpenStreetMap",
-  websites: "Reading hotel websites for emails and phones",
+  osm: "Adding places from OpenStreetMap",
+  websites: "Finishing up",
   done: "Done",
 };
 
@@ -25,6 +25,7 @@ export default function Campaigns() {
   const [mode, setMode] = useState<"city" | "spot">("city");
   const [place, setPlace] = useState("");
   const [radius, setRadius] = useState(3);
+  const [category, setCategory] = useState<CategoryKey>("hotels");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -43,7 +44,7 @@ export default function Campaigns() {
     setBusy(true);
     setError("");
     try {
-      await scanPlace(place.trim(), mode === "city" ? null : radius);
+      await scanPlace(place.trim(), mode === "city" ? null : radius, category);
       setPlace("");
     } catch (e) {
       setError(errorText(e, "Couldn't start the scan. The server may be waking up; try again in a minute."));
@@ -56,8 +57,11 @@ export default function Campaigns() {
     <div className="page wide">
       <header className="page-head">
         <div>
-          <h1 className="title">Find hotels</h1>
-          <p className="muted sub">Scan a whole city, or search around one spot. Hotels are grouped by area automatically.</p>
+          <h1 className="title">Find businesses</h1>
+          <p className="muted sub">
+            Pick a kind of business and scan a whole city or one spot. Jarvis reads their websites and saves only the
+            ones with an email, grouped by area.
+          </p>
         </div>
       </header>
 
@@ -65,6 +69,12 @@ export default function Campaigns() {
         <div className="segmented" role="radiogroup" aria-label="Scan type">
           <button type="button" role="radio" aria-checked={mode === "city"} className={mode === "city" ? "active" : ""} onClick={() => setMode("city")}>Whole city</button>
           <button type="button" role="radio" aria-checked={mode === "spot"} className={mode === "spot" ? "active" : ""} onClick={() => setMode("spot")}>Around a spot</button>
+        </div>
+        <div className="field">
+          <label htmlFor="category">Business</label>
+          <select id="category" className="input" value={category} onChange={(e) => setCategory(e.target.value as CategoryKey)}>
+            {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </select>
         </div>
         <div className="field grow">
           <label htmlFor="place">{mode === "city" ? "City" : "Area"}</label>
@@ -80,7 +90,7 @@ export default function Campaigns() {
         )}
         <button className="btn primary" type="submit" disabled={busy || !place.trim()}>
           <Icon name="search" size={18} />
-          {busy ? "Starting…" : mode === "city" ? "Scan city" : "Find hotels"}
+          {busy ? "Starting…" : mode === "city" ? "Scan city" : "Search here"}
         </button>
         <p className="muted small hint">
           {mode === "city"
@@ -131,6 +141,7 @@ function ScanCard({ c }: { c: Row }) {
         <div>
           <h2>{c.name}</h2>
           <div className="muted small">
+            <span className="cat-tag">{categoryLabel(c.category)}</span>{" "}
             {c.area.radiusM ? `${c.area.radiusM / 1000} km around the spot` : "Whole city"} · started {timeAgo(c.createdAt)}
           </div>
         </div>
@@ -147,7 +158,7 @@ function ScanCard({ c }: { c: Row }) {
         <div className="progress-block">
           <div className="muted">{PHASE[scan?.phase ?? "map"]}…</div>
           <div className="stat-row">
-            <Stat label="Hotels found" value={found} />
+            <Stat label="New with email" value={found} />
             <Stat label="Squares searched" value={scan?.squaresDone ?? 0} />
             <Stat label="Squares left" value={scan?.queue?.length ?? 0} />
           </div>
@@ -164,9 +175,8 @@ function ScanCard({ c }: { c: Row }) {
       {ready && (
         <>
           <div className="stat-row">
-            <Stat label="Hotels" value={c.stats.found} />
-            <Stat label="With email" value={c.stats.withEmail} />
-            <Stat label="With phone" value={c.stats.withPhone} />
+            <Stat label="New from this scan" value={c.scan?.found ?? 0} />
+            <Stat label="To email in the area" value={c.stats.withEmail} />
           </div>
           <div className="row-between">
             <button className="btn" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
@@ -181,7 +191,7 @@ function ScanCard({ c }: { c: Row }) {
               <table className="areas">
                 <thead>
                   <tr>
-                    {([["area", "Area"], ["total", "Hotels"], ["withEmail", "Email"], ["withPhone", "Phone"], ["emailed", "Emailed"], ["replied", "Replied"]] as [SortKey, string][]).map(([k, label]) => (
+                    {([["area", "Area"], ["total", "Businesses"], ["withEmail", "Email"], ["emailed", "Emailed"], ["replied", "Replied"]] as [SortKey, string][]).map(([k, label]) => (
                       <th key={k} aria-sort={sort === k ? (k === "area" ? "ascending" : "descending") : undefined}>
                         <button className={`th-btn ${sort === k ? "active" : ""}`} onClick={() => setSort(k)}>{label}</button>
                       </th>
@@ -196,7 +206,6 @@ function ScanCard({ c }: { c: Row }) {
                       </td>
                       <td>{a.total}</td>
                       <td className={a.withEmail ? "strong" : "muted"}>{a.withEmail}</td>
-                      <td className={a.withPhone ? "" : "muted"}>{a.withPhone}</td>
                       <td>{a.statuses.emailed ?? 0}</td>
                       <td>{(a.statuses.replied ?? 0) + (a.statuses.interested ?? 0)}</td>
                     </tr>

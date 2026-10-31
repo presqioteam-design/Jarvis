@@ -11,7 +11,8 @@ TRIAL = "14-day free trial of the Growth plan, no card needed"
 
 # Given to the AI when it answers a hotel's questions. Plain facts only.
 FACTS = f"""
-Presqio is phone-based staff attendance and payroll for businesses with one or more branches, such as hotels.
+Presqio is phone-based staff attendance and payroll for businesses with one or more branches, such as hotels,
+hospitals and clinics, schools and colleges, restaurants, factories, stores, security agencies, gyms and coaching centres.
 
 Attendance
 - Employees open Presqio in their phone's browser (nothing to install) and sign in with their employee ID.

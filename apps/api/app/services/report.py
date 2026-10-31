@@ -59,9 +59,9 @@ def written(r: dict) -> str:
         f"📥 Replies today: {sum(rep.values())}"
         + (f" (🔥 {rep['interested']} interested, ❓ {rep['question']} questions, 👋 {rep['not_now']} not now, 🚫 {rep['unsubscribe']} stop, ✉️ {rep['other']} other)" if rep else ""),
         *([f"📭 Bounced (address doesn't exist): {r['bounced']}"] if r["bounced"] else []),
-        f"⏳ Waiting for a reply: {r['awaiting']} hotels",
+        f"⏳ Waiting for a reply: {r['awaiting']} businesses",
         "",
-        f"📋 Still to contact: {r['left']:,} hotels with an email",
+        f"📋 Still to contact: {r['left']:,} businesses with an email",
         f"🔁 Follow-ups due by tomorrow: {r['dueTomorrow']}",
         f"🤖 Tomorrow: {'auto-send ON, ' + outreach.auto_window() if r['auto'] else 'auto-send PAUSED (say “resume auto” to restart)'}",
     ]
@@ -69,7 +69,7 @@ def written(r: dict) -> str:
         lines += ["", "🔥 Interested: " + ", ".join(r["hot"])]
     lines += ["", f"📈 Gemini today: {usage.summary()}"]
     if r["left"] == 0:
-        lines += ["", "⚠️ No hotels with an email are left. Scan another area to find more."]
+        lines += ["", "⚠️ No businesses with an email are left. Scan another area to find more."]
     return "\n".join(lines)
 
 
@@ -80,12 +80,12 @@ def spoken(r: dict) -> str:
         f"I sent {r['first'] + r['followUps']} emails today: {r['first']} new, and {r['followUps']} follow-ups.",
         f"We got {sum(rep.values())} replies" + (f", and {rep['interested']} of them are interested." if rep.get("interested") else "."),
         *([f"{r['bounced']} emails bounced because the address doesn't exist."] if r["bounced"] else []),
-        f"{r['awaiting']} hotels haven't replied yet.",
-        f"There are {r['left']} hotels with an email still to contact, and {r['dueTomorrow']} follow-ups are due by tomorrow.",
+        f"{r['awaiting']} businesses haven't replied yet.",
+        f"There are {r['left']} businesses with an email still to contact, and {r['dueTomorrow']} follow-ups are due by tomorrow.",
         "Automatic sending continues tomorrow from ten in the morning." if r["auto"] else "Automatic sending is paused.",
     ]
     if r["hot"]:
-        parts.append("Interested hotels: " + ", ".join(r["hot"][:5]) + ". You may want to call them.")
+        parts.append("Interested: " + ", ".join(r["hot"][:5]) + ". You may want to call them.")
     return " ".join(parts)
 
 

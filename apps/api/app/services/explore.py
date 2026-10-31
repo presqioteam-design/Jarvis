@@ -1,12 +1,14 @@
 """
 The night explorer: Jarvis finds India's biggest cities and their areas on
 OpenStreetMap, then searches a few areas every night (cron, 12:30–5 AM IST)
-and saves only hotels it can reach (an email or a phone).
+for every business category, and saves only businesses it can email.
 
 Built to stay inside the free limits:
 - one small doc per city in explore/{city}: name, position, its areas and their progress
-- per area: a 4 km square on TomTom, website reads only for new hotels,
-  database reads only for hotels that have some contact detail
+  (area["cats"] lists the categories already searched there, so new categories get
+  searched in areas explored before)
+- per area and category: a 4 km square on TomTom (at most MAX_SQUARES_PER_CATEGORY calls),
+  website reads before saving, database writes only for businesses with an email
 - EXPLORE_AREAS_PER_NIGHT areas a night (default 6); the summary goes to Telegram
   in the morning (with the first daytime cron run), not at 3 AM
 """
@@ -15,6 +17,7 @@ import asyncio
 import logging
 import math
 import re
+from collections import Counter
 from datetime import datetime
 
 import httpx
@@ -23,7 +26,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from ..config import get_settings
 from ..firebase import col, db
 from ..timeutil import now_local, now_utc
-from . import activity, crawler, keepalive, leads, sources, telegram
+from . import activity, categories, keepalive, leads, sources, telegram
 
 log = logging.getLogger(__name__)
 OVERPASS = ["https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass-api.de/api/interpreter",
@@ -32,7 +35,7 @@ TOP_CITIES = 50
 AREA_RADIUS_M = 2000          # each area search covers a 4 km square
 AREA_SPACING_KM = 2.0         # areas closer than this to one already listed are skipped (they'd overlap)
 MAX_AREAS_PER_CITY = 80
-MAX_SQUARES_PER_AREA = 60     # dense centres split into many small squares; this caps TomTom calls
+MAX_SQUARES_PER_CATEGORY = 6  # dense centres split into many small squares; this caps TomTom calls per category
 LATIN = re.compile(r"^[A-Za-z0-9 .,'()&/-]+$")
 _running: asyncio.Task | None = None
 
@@ -194,63 +197,42 @@ async def build_areas(ref, city: dict) -> int:
 
 # ── one area ─────────────────────────────────────────────────────────────────
 
-async def explore_area(city: str, area: dict) -> dict:
+def pending_cats(area: dict) -> list[str]:
+    """Categories not yet searched in this area. Areas explored before categories existed did hotels."""
+    done = set(area.get("cats") or (["hotels"] if area.get("status") == "done" else []))
+    return [c.key for c in categories.CATEGORIES if c.key not in done]
+
+
+async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
     box = leads.square_around(area["lat"], area["lon"], AREA_RADIUS_M)
-    queue, found, squares = leads.grid(box, leads.START_SQUARE_KM), {}, 0
+    found, squares = {}, 0
     async with httpx.AsyncClient(timeout=30) as client:
-        while queue and squares < MAX_SQUARES_PER_AREA:
-            square = queue.pop(0)
-            hotels = await sources.tomtom_box(client, square)
-            squares += 1
-            if len(hotels) >= 100 and leads.width_km(square) > leads.MIN_SQUARE_KM:
-                queue.extend(leads.grid(square, leads.width_km(square) / 2))
-            for h in hotels:
-                found[h["id"]] = h
+        for key in cats:
+            cat = categories.get(key)
+            queue, used = leads.grid(box, leads.START_SQUARE_KM), 0
+            while queue and used < MAX_SQUARES_PER_CATEGORY:
+                square = queue.pop(0)
+                places, full = await sources.tomtom_box(client, square, cat)
+                used += 1
+                if full and leads.width_km(square) > leads.MIN_SQUARE_KM:
+                    queue.extend(leads.grid(square, leads.width_km(square) / 2))
+                for h in places:
+                    found.setdefault(h["id"], h)
+            squares += used
+    # OpenStreetMap lists many more websites and emails than TomTom for most categories
+    for h in await sources.osm_places(box, [categories.get(k) for k in cats]):
+        found.setdefault(h["id"], h)
 
-    # only hotels with something to go on; then skip the ones we already have
-    candidates = [h for h in found.values() if h["name"] and (h["phone"] or h["website"])]
-    known = set()
-    refs = [col("leads").document(h["id"]) for h in candidates]
-    for i in range(0, len(refs), 300):
-        known |= {s.id for s in db().get_all(refs[i:i + 300]) if s.exists}
-    new = [h for h in candidates if h["id"] not in known]
-
-    sites = [h["website"] for h in new if h["website"] and not crawler.is_aggregator(h["website"])]
-    crawled = await crawler.crawl_many(sites)
-    keep = []
-    for h in new:
-        info = crawled.get(h["website"], {})
-        h["emails"] = [e for e in info.get("emails", []) if crawler.usable(e)]
-        h["phone"] = h["phone"] or info.get("phone", "")
-        if h["emails"] or h["phone"]:
-            h["area"] = h["area"] or area["name"]
-            keep.append(h)
-
-    save(city, keep)
-    return {"found": len(found), "added": len(keep), "withEmail": sum(1 for h in keep if h["emails"]),
-            "withPhone": sum(1 for h in keep if h["phone"]), "squares": squares}
+    rows = await leads.save_reachable(list(found.values()), "explore", city, area["name"])
+    add_to_city(city, rows)
+    by_cat = dict(Counter(r["category"] for r in rows))
+    return {"found": len(found), "added": len(rows), "withEmail": len(rows), "squares": squares, "byCategory": by_cat}
 
 
-def save(city: str, hotels: list[dict]) -> None:
-    """Write new leads and add them to the city's totals and search list without re-reading the city."""
-    if not hotels:
+def add_to_city(city: str, rows: list[dict]) -> None:
+    """Add new leads to the city's totals and search list without re-reading the city."""
+    if not rows:
         return
-    now = now_utc().isoformat()
-    rows = []
-    for i in range(0, len(hotels), 400):
-        batch = db().batch()
-        for h in hotels[i:i + 400]:
-            key = leads.area_key(city, h["area"])
-            row = {
-                "campaignId": "explore", "name": h["name"], "address": h["address"], "lat": h["lat"], "lon": h["lon"],
-                "city": city, "area": h["area"], "areaKey": key, "phone": h["phone"], "website": h["website"],
-                "emails": h["emails"], "hasEmail": bool(h["emails"]), "source": h["source"], "status": "new",
-                "crawled": True, "followUps": 0, "createdAt": now, "updatedAt": now,
-            }
-            batch.set(col("leads").document(h["id"]), row)
-            rows.append(row | {"id": h["id"]})
-        batch.commit()
-
     snap = leads.city_doc(city).get()
     area_map = (snap.to_dict() or {}).get("areas", {}) if snap.exists else {}
     for r in rows:
@@ -259,6 +241,8 @@ def save(city: str, hotels: list[dict]) -> None:
         a["withEmail"] += bool(r["emails"])
         a["withPhone"] += bool(r["phone"])
         a["statuses"]["new"] = a["statuses"].get("new", 0) + 1
+        cats = a.setdefault("categories", {})
+        cats[r["category"]] = cats.get(r["category"], 0) + 1
     leads.write_city(city, area_map)
     leads.merge_search_index(city, rows)
 
@@ -283,22 +267,23 @@ def night() -> dict:
     today = now_local().date().isoformat()
     state = (settings_ref().get().to_dict() or {}).get("exploreNight") or {}
     if state.get("date") != today:
-        state = {"date": today, "areas": 0, "added": 0, "withEmail": 0, "withPhone": 0, "done": [], "summarySent": False}
+        state = {"date": today, "areas": 0, "added": 0, "withEmail": 0, "done": [], "summarySent": False}
     return state
 
 
 def next_area() -> tuple | None:
-    """(city ref, city doc, area index) to explore next: priority cities first, then by size."""
-    cities = sorted((d for d in col("explore").stream() if not d.to_dict().get("done")),
-                    key=lambda d: (-d.to_dict().get("priority", 0), d.to_dict().get("order", 999)))
+    """(city ref, city doc, area index) to explore next: priority cities first, then by size.
+    A city is done when every area has been searched for every category."""
+    cities = sorted(col("explore").stream(), key=lambda d: (-d.to_dict().get("priority", 0), d.to_dict().get("order", 999)))
     for d in cities:
         c = d.to_dict()
         if not c.get("areasBuilt"):
             return d.reference, c, None
-        idx = next((i for i, a in enumerate(c["areas"]) if a["status"] == "todo"), None)
+        idx = next((i for i, a in enumerate(c["areas"]) if pending_cats(a)), None)
         if idx is not None:
             return d.reference, c, idx
-        d.reference.update({"done": True})
+        if not c.get("done"):
+            d.reference.update({"done": True})
     return None
 
 
@@ -338,22 +323,30 @@ async def _run_one() -> None:
                 city = ref.get().to_dict()
                 idx = 0
             area = city["areas"][idx]
-            stats = await explore_area(city["city"], area)
-            city["areas"][idx] |= {"status": "done", "doneAt": now_utc().isoformat(), **stats}
+            cats = pending_cats(area)
+            stats = await explore_area(city["city"], area, cats)
+            done_cats = sorted(set(area.get("cats") or (["hotels"] if area.get("status") == "done" else [])) | set(cats))
+            city["areas"][idx] |= {"status": "done", "cats": done_cats, "doneAt": now_utc().isoformat(),
+                                   **{k: v for k, v in stats.items() if k != "byCategory"}}
             ref.update({"areas": city["areas"]})
             record(city["city"], area["name"], stats)
         except Exception:
             log.exception("Explorer run failed")
 
 
+def by_category_text(counts: dict) -> str:
+    return ", ".join(f"{n} {categories.get(k).label.lower()}" for k, n in sorted(counts.items(), key=lambda t: -t[1]))
+
+
 def record(city: str, area: str, stats: dict) -> None:
     state = night()
     state["areas"] += 1
-    for k in ("added", "withEmail", "withPhone"):
-        state[k] += stats[k]
-    state["done"].append(f"{area}, {city}: +{stats['added']} ({stats['withEmail']} email)")
+    state["added"] += stats["added"]
+    state["withEmail"] = state.get("withEmail", 0) + stats["withEmail"]
+    detail = f" ({by_category_text(stats['byCategory'])})" if stats["byCategory"] else ""
+    state["done"].append(f"{area}, {city}: +{stats['added']}{detail}")
     settings_ref().set({"exploreNight": state}, merge=True)
-    activity.log("lead_found", f"Explored {area}, {city}: {stats['added']} new hotels ({stats['withEmail']} with email, {stats['withPhone']} with phone).")
+    activity.log("lead_found", f"Explored {area}, {city}: {stats['added']} new businesses with an email{detail}.")
 
 
 
@@ -373,8 +366,8 @@ def summary(state: dict) -> str:
         names = [a["name"] for a in c["areas"][i:i + 4]]
         upcoming = f"\nNext: {', '.join(names)} ({c['city']})"
     lines = "\n".join(f"• {d}" for d in state["done"])
-    return (f"🌃 Overnight exploring: {state['areas']} areas, {state['added']} new hotels "
-            f"({state['withEmail']} with email, {state['withPhone']} with phone).\n{lines}{upcoming}")
+    return (f"🌃 Overnight exploring: {state['areas']} areas, {state['added']} new businesses with an email.\n"
+            f"{lines}{upcoming}")
 
 
 def status() -> str:
@@ -383,7 +376,7 @@ def status() -> str:
         return "🌍 Explorer hasn't started yet. It runs at night (12:30–5 AM IST) and lists the top cities on its first run."
     done_c = sum(1 for c in cities if c.get("done"))
     areas = [a for c in cities for a in c.get("areas", [])]
-    done_a = sum(1 for a in areas if a["status"] == "done")
+    done_a = sum(1 for a in areas if not pending_cats(a))
     nxt = next_area()
     if nxt is None:
         where = "every listed city is done"
@@ -394,7 +387,7 @@ def status() -> str:
     state = night()
     return (f"🌍 Explorer is {'ON' if enabled() else 'PAUSED'}: {get_settings().explore_areas_per_night} areas a night, 12:30–5 AM IST.\n"
             f"Cities: {done_c} of {len(cities)} done · areas explored: {done_a} of {len(areas)} listed so far.\n"
-            f"Tonight so far: {state['areas']} areas, {state['added']} new hotels.\nNow on: {where}")
+            f"Tonight so far: {state['areas']} areas, {state['added']} new businesses with an email.\nNow on: {where}")
 
 
 async def prioritise(name: str) -> str:

@@ -1,9 +1,12 @@
 """
-Leads: scanning a city or area for hotels, and keeping per-area totals.
+Leads: scanning a city or area for one category of business, and keeping per-area totals.
 
 A scan covers the place's map box with squares. TomTom returns at most 100
-hotels per search, so a square that comes back full is split into four and
+results per search, so a square that comes back full is split into four and
 searched again. Progress is saved on the campaign, so a stopped scan resumes.
+
+Jarvis only emails, so a business is saved only when an email is found for it
+(on the map, or on its own website, read before saving).
 """
 
 import logging
@@ -18,7 +21,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 from ..firebase import col, db
 from ..timeutil import now_utc
-from . import activity, crawler, keepalive, sources, telegram
+from . import activity, categories, crawler, keepalive, sources, telegram
 
 log = logging.getLogger(__name__)
 SAME_PLACE_M = 200      # two results this close with similar names are one hotel
@@ -81,13 +84,14 @@ def scan_blocked(whole_city: bool) -> str:
     return ""
 
 
-def create_campaign(place: str, radius_m: int | None) -> str:
+def create_campaign(place: str, radius_m: int | None, category: str = categories.DEFAULT) -> str:
     """radius_m=None scans the whole city/town; otherwise a square around the spot."""
     _, ref = col("campaigns").add({
         "name": place,
         "kind": "area" if radius_m else "city",
         "area": {"label": place, "lat": 0, "lon": 0, "radiusM": radius_m or 0},
-        "query": "hotel",
+        "category": categories.get(category).key,
+        "query": categories.get(category).key,
         "status": "searching",
         "createdAt": now_utc().isoformat(),
         "stats": {"found": 0, "withEmail": 0, "withPhone": 0, "emailed": 0, "replied": 0, "interested": 0},
@@ -105,6 +109,7 @@ async def run_campaign(campaign_id: str) -> None:
 async def _run_campaign(campaign_id: str) -> None:
     ref = col("campaigns").document(campaign_id)
     camp = ref.get().to_dict()
+    cat = categories.get(camp.get("category"))
     try:
         city = camp.get("city")
         if not city:
@@ -122,17 +127,16 @@ async def _run_campaign(campaign_id: str) -> None:
 
         scan = camp["scan"]
         if scan["phase"] == "map":
-            await scan_squares(ref, scan, campaign_id, city)
+            await scan_squares(ref, scan, campaign_id, city, cat)
             scan["phase"] = "osm"
             ref.update({"scan.phase": "osm"})
         if scan["phase"] == "osm":
-            add_osm(await sources.osm_hotels(camp["box"]), campaign_id, city, camp["box"])
+            await add_osm(await sources.osm_places(camp["box"], [cat]), campaign_id, city, camp["box"])
             ref.update({"scan.phase": "websites"})
-        await crawl_city(city)
 
         if camp.get("kind") == "area":
             # a spot search only touches nearby areas: don't re-read the whole city
-            nearby = leads_in_box(camp["box"], ["areaKey", "emails", "phone", "name", "area", "city"])
+            nearby = leads_in_box(camp["box"], ["areaKey", "emails", "phone", "name", "area", "city", "category"])
             merge_search_index(city, [l for l in nearby if l.get("city") == city])
             for key in {l["areaKey"] for l in nearby if l.get("areaKey")}:
                 recompute_area(key)
@@ -147,12 +151,13 @@ async def _run_campaign(campaign_id: str) -> None:
             "status": "ready", "scan.phase": "done",
             "stats.found": totals["total"], "stats.withEmail": totals["withEmail"], "stats.withPhone": totals["withPhone"],
         })
+        new = scan.get("found", 0)
         text = (
-            f"Scan of {camp['name']} finished: {totals['total']} hotels in "
-            f"{totals['areas']} areas, {totals['withEmail']} with email, {totals['withPhone']} with phone."
+            f"Scan of {camp['name']} for {cat.label.lower()} finished: {new} new with an email. "
+            f"The area now has {totals['withEmail']} businesses to email across {totals['areas']} areas."
         )
         activity.log("lead_found", text)
-        await telegram.send(f"🏨 {text}")
+        await telegram.send(f"🔎 {text}")
     except ResourceExhausted:
         ref.update({"status": "failed", "error": QUOTA_STOPPED})
         await telegram.send(f"⏸ Scan of {camp['name']} paused: {QUOTA_STOPPED}")
@@ -191,58 +196,75 @@ def width_km(box: dict) -> float:
     return (box["e"] - box["w"]) * 111 * math.cos(math.radians(box["s"]))
 
 
-async def scan_squares(ref, scan: dict, campaign_id: str, city: str) -> None:
-    queue = scan["queue"]
+async def scan_squares(ref, scan: dict, campaign_id: str, city: str, cat: categories.Category) -> None:
+    queue, pending = scan["queue"], []
     async with httpx.AsyncClient(timeout=30) as client:
         while queue:
             box = queue.pop(0)
-            hotels = await sources.tomtom_box(client, box)
-            if len(hotels) >= 100 and width_km(box) > MIN_SQUARE_KM:
+            places, full = await sources.tomtom_box(client, box, cat)
+            if full and width_km(box) > MIN_SQUARE_KM:
                 queue.extend(grid(box, width_km(box) / 2))
-            scan["found"] += upsert(hotels, campaign_id, city)
+            pending += places
             scan["squaresDone"] += 1
             if scan["squaresDone"] % SAVE_EVERY == 0 or not queue:
+                # save what these squares found before recording progress, so a resume doesn't lose it
+                scan["found"] += len(await save_reachable(pending, campaign_id, city))
+                pending = []
                 ref.update({"scan.queue": queue, "scan.squaresDone": scan["squaresDone"], "scan.found": scan["found"]})
 
 
-def upsert(hotels: list[dict], campaign_id: str, city: str) -> int:
-    """Create new leads; for known ones only fill missing details. Returns how many were new.
-    Hotels with no phone, email or website can never be contacted, so they aren't saved."""
-    hotels = [h for h in hotels if h["name"] and (h["phone"] or h["emails"] or h["website"])]
-    if not hotels:
-        return 0
-    refs = [col("leads").document(h["id"]) for h in hotels]
-    known = {s.id: s.to_dict() for s in db().get_all(refs) if s.exists}
-    blocked = {d.id for d in col("dnc").stream()} if len(known) < len(hotels) else set()
+async def save_reachable(found: list[dict], campaign_id: str, city: str, fallback_area: str = "") -> list[dict]:
+    """Save the businesses we can email, and return the saved rows.
+
+    Websites are read first and only businesses with an email are written: Jarvis can only email,
+    and this keeps database writes (and reads, which happen only for these) low. Businesses already
+    saved, and addresses on the do-not-contact list, are skipped."""
+    places = {h["id"]: h for h in found if h["name"] and (h["emails"] or h["website"])}
+    sites = list({h["website"] for h in places.values() if not h["emails"] and not crawler.is_aggregator(h["website"])})
+    crawled = await crawler.crawl_many(sites) if sites else {}
+    reachable = []
+    for h in places.values():
+        info = crawled.get(h["website"], {})
+        emails = [e for e in (h["emails"] or info.get("emails", [])) if crawler.usable(e)]
+        if emails:
+            reachable.append(h | {"emails": emails, "phone": h["phone"] or info.get("phone", "")})
+    if not reachable:
+        return []
+
+    refs = [col("leads").document(h["id"]) for h in reachable]
+    known = {snap.id for i in range(0, len(refs), 300) for snap in db().get_all(refs[i:i + 300]) if snap.exists}
+    blocked = {d.id for d in col("dnc").stream()}
+    # the same business can come from both maps under different ids: match on the email
+    new_emails = sorted({e for h in reachable if h["id"] not in known for e in h["emails"]})
+    saved_emails = set()
+    for i in range(0, len(new_emails), 30):   # Firestore allows 30 values per array-contains-any
+        q = col("leads").where(filter=FieldFilter("emails", "array_contains_any", new_emails[i:i + 30])).select(["emails"])
+        saved_emails |= {e for d in q.stream() for e in d.to_dict().get("emails", [])}
     now = now_utc().isoformat()
-    batch, new = db().batch(), 0
-
-    for h, doc in zip(hotels, refs):
-        area = h["area"] or "Other"
-        place = {"city": city, "area": area, "areaKey": area_key(city, area)}
-        contact = {"phone": h["phone"], "website": h["website"], "emails": h["emails"]}
-        if h["id"] in known:
-            old = known[h["id"]]
-            patch = {k: v for k, v in {**contact, **place}.items() if v and not old.get(k)}
-            if patch.get("emails"):
-                patch["hasEmail"] = True
-            if patch:
-                batch.update(doc, {**patch, "updatedAt": now})
+    rows, used, batch = [], set(saved_emails), db().batch()
+    for h in reachable:
+        # one lead per address: branches sharing a website would otherwise get the same email twice
+        if h["id"] in known or any(e in blocked or e in used for e in h["emails"]):
             continue
-        is_blocked = any(k in blocked for k in [*h["emails"], re.sub(r"\D", "", h["phone"])] if k)
-        batch.set(doc, {
+        used.update(h["emails"])
+        area = h["area"] or fallback_area or "Other"
+        row = {
             "campaignId": campaign_id, "name": h["name"], "address": h["address"], "lat": h["lat"], "lon": h["lon"],
-            **place, **contact, "hasEmail": bool(h["emails"]), "source": h["source"],
-            "status": "unsubscribed" if is_blocked else ("new" if h["emails"] or h["phone"] else "no_contact"),
-            "crawled": not h["website"], "followUps": 0, "createdAt": now, "updatedAt": now,
-        })
-        new += 1
+            "city": city, "area": area, "areaKey": area_key(city, area), "category": h.get("category", categories.DEFAULT),
+            "phone": h["phone"], "website": h["website"], "emails": h["emails"], "hasEmail": True, "source": h["source"],
+            "status": "new", "crawled": True, "followUps": 0, "createdAt": now, "updatedAt": now,
+        }
+        batch.set(col("leads").document(h["id"]), row)
+        rows.append(row | {"id": h["id"]})
+        if len(rows) % 400 == 0:
+            batch.commit()
+            batch = db().batch()
     batch.commit()
-    return new
+    return rows
 
 
-def add_osm(osm: list[dict], campaign_id: str, city: str, box: dict) -> None:
-    """Add OpenStreetMap hotels the map scan missed; give them the nearest known area."""
+async def add_osm(osm: list[dict], campaign_id: str, city: str, box: dict) -> None:
+    """Add OpenStreetMap places the map scan missed; give them the nearest known area."""
     if not osm:
         return
     known = leads_in_box(box, ["name", "lat", "area", "phone"])
@@ -264,38 +286,7 @@ def add_osm(osm: list[dict], campaign_id: str, city: str, box: dict) -> None:
             h["area"] = closest["area"] if closest and distance_m(closest, h) < 1500 else ""
         fresh.append(h)
     for i in range(0, len(fresh), 200):
-        upsert(fresh[i:i + 200], campaign_id, city)
-
-
-async def crawl_city(city: str) -> None:
-    """Visit websites not yet read; promote no_contact leads that gained an email or phone."""
-    todo = [d for d in col("leads").where(filter=FieldFilter("city", "==", city)).where(filter=FieldFilter("crawled", "==", False)).stream()]
-    leads_by_site = defaultdict(list)
-    for d in todo:
-        lead = d.to_dict()
-        if lead.get("website") and not crawler.is_aggregator(lead["website"]):
-            leads_by_site[lead["website"]].append((d.reference, lead))
-    found = await crawler.crawl_many(list(leads_by_site))
-    now = now_utc().isoformat()
-    batch, pending = db().batch(), 0
-    for d in todo:
-        lead = d.to_dict()
-        info = found.get(lead.get("website", ""), {})
-        emails = [e for e in lead.get("emails") or info.get("emails", []) if crawler.usable(e)]
-        phone = lead.get("phone") or info.get("phone", "")
-        if not emails and not phone and lead["status"] in ("new", "no_contact"):
-            batch.delete(d.reference)   # the website had no contact details either: nothing to reach
-        else:
-            patch = {"crawled": True, "emails": emails, "hasEmail": bool(emails), "phone": phone, "updatedAt": now}
-            if lead["status"] == "no_contact":
-                patch["status"] = "new"
-            batch.update(d.reference, patch)
-        pending += 1
-        if pending >= 400:
-            batch.commit()
-            batch, pending = db().batch(), 0
-    if pending:
-        batch.commit()
+        await save_reachable(fresh[i:i + 200], campaign_id, city)
 
 
 def area_summary(rows: list[dict], city: str) -> dict:
@@ -304,6 +295,7 @@ def area_summary(rows: list[dict], city: str) -> dict:
         "city": city, "area": rows[0]["area"], "total": len(rows),
         "withEmail": sum(1 for l in rows if l.get("emails")), "withPhone": sum(1 for l in rows if l.get("phone")),
         "statuses": dict(statuses),
+        "categories": dict(Counter(l.get("category") or categories.DEFAULT for l in rows)),
     }
 
 
@@ -325,7 +317,7 @@ def recompute_areas(city: str) -> dict:
     groups: dict[str, list] = defaultdict(list)
     unflagged = []
     everyone = []
-    for d in col("leads").where(filter=FieldFilter("city", "==", city)).select(["name", "area", "areaKey", "status", "emails", "phone", "hasEmail"]).stream():
+    for d in col("leads").where(filter=FieldFilter("city", "==", city)).select(["name", "area", "areaKey", "status", "emails", "phone", "hasEmail", "category"]).stream():
         l = d.to_dict()
         everyone.append(l | {"id": d.id})
         groups[l["areaKey"]].append(l)
@@ -349,7 +341,8 @@ SEARCH_SHARD = 2500   # entries per doc, well under Firestore's 1 MiB doc limit
 
 
 def search_entry(l: dict) -> dict:
-    return {"i": l["id"], "n": l.get("name", ""), "e": (l.get("emails") or [""])[0], "p": l.get("phone", ""), "a": l.get("area", "")}
+    return {"i": l["id"], "n": l.get("name", ""), "e": (l.get("emails") or [""])[0], "p": l.get("phone", ""), "a": l.get("area", ""),
+            "c": l.get("category") or categories.DEFAULT}
 
 
 def write_search_index(city: str, rows: list[dict]) -> None:
@@ -375,12 +368,13 @@ def merge_search_index(city: str, rows: list[dict]) -> None:
             current[e["i"]] = e
     for l in rows:
         current[l["id"]] = search_entry(l)
-    write_search_index(city, [{"id": e["i"], "name": e["n"], "emails": [e["e"]] if e["e"] else [], "phone": e["p"], "area": e["a"]} for e in current.values()])
+    write_search_index(city, [{"id": e["i"], "name": e["n"], "emails": [e["e"]] if e["e"] else [], "phone": e["p"], "area": e["a"],
+                               "category": e.get("c")} for e in current.values()])
 
 
 def recompute_area(key: str) -> None:
     """Refresh one area's totals (reads only that area's leads)."""
-    rows = [d.to_dict() for d in col("leads").where(filter=FieldFilter("areaKey", "==", key)).select(["area", "city", "status", "emails", "phone"]).stream()]
+    rows = [d.to_dict() for d in col("leads").where(filter=FieldFilter("areaKey", "==", key)).select(["area", "city", "status", "emails", "phone", "category"]).stream()]
     ref = col("cities").document(key.split("--")[0])
     snap = ref.get()
     if not snap.exists:
@@ -457,11 +451,13 @@ def list_leads(area_key_: str | None, status: str, limit: int = 20) -> list[dict
     return out
 
 
-def approve_all_with_email(city: str, area: str | None) -> int:
+def approve_all_with_email(city: str, area: str | None, category: str | None = None) -> int:
     q = (col("leads").where(filter=FieldFilter("city", "==", city))
          .where(filter=FieldFilter("status", "==", "new")).where(filter=FieldFilter("hasEmail", "==", True)))
     if area:
         q = q.where(filter=FieldFilter("areaKey", "==", area_key(city, area)))
+    if category:
+        q = q.where(filter=FieldFilter("category", "==", category))
     refs = [d.reference for d in q.select(["areaKey"]).stream()]
     now = now_utc().isoformat()
     for i in range(0, len(refs), 400):
@@ -471,7 +467,7 @@ def approve_all_with_email(city: str, area: str | None) -> int:
         batch.commit()
     if refs:
         recompute_area_of([r.id for r in refs])
-        activity.log("status_change", f"Approved {len(refs)} hotels with email in {area or city}.")
+        activity.log("status_change", f"Approved {len(refs)} businesses with email in {area or city}.")
     return len(refs)
 
 

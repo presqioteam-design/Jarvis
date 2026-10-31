@@ -163,7 +163,7 @@ async def _nothing_left_once_a_day() -> None:
     today = now_local().date().isoformat()
     if ((ref.get().to_dict() or {}).get("emptyNoticeOn")) != today:
         ref.set({"emptyNoticeOn": today}, merge=True)
-        await telegram.send("🤖 Auto-send: no hotels with an email are left to contact, and no follow-ups are due. "
+        await telegram.send("🤖 Auto-send: no businesses with an email are left to contact, and no follow-ups are due. "
                             "Scan another area to find more.")
 
 
@@ -171,7 +171,8 @@ async def _send_all(targets: list[dict], step: int | None) -> tuple[list[dict], 
     sent, failed = [], []
     for i, lead in enumerate(targets):
         n = lead.get("followUps", 0) + 1 if step is None else step
-        email = templates.render(n, lead["name"], lead.get("area") or templates.area_from(lead.get("address", "")), get_settings().sender_name)
+        email = templates.render(n, lead["name"], lead.get("area") or templates.area_from(lead.get("address", "")),
+                                 get_settings().sender_name, lead.get("category"))
         try:
             msg_id, thread_id = await mailer.send(lead["to"], email.subject, email.body,
                                                   lead.get("lastMessageId") if n else None, lead.get("threadId") if n else None)
