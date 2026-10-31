@@ -38,20 +38,32 @@ export default function Settings() {
   );
 }
 
+// kept between visits so coming back to Settings shows the last values at once
+let lastSending: SendingView | null = null;
+
 function SendingSection() {
-  const [view, setView] = useState<SendingView | null>(null);
-  const [form, setForm] = useState<SendingSettings | null>(null);
+  const [view, setViewState] = useState<SendingView | null>(lastSending);
+  const [form, setForm] = useState<SendingSettings | null>(lastSending?.settings ?? null);
+  const setView = (v: SendingView) => {
+    lastSending = v;
+    setViewState(v);
+  };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
 
+  // refresh quietly; don't overwrite anything already being edited
   useEffect(() => {
+    const before = lastSending;
     getSending()
       .then((v) => {
         setView(v);
-        setForm(v.settings);
+        setForm((f) => (!f || !before || JSON.stringify(f) === JSON.stringify(before.settings) ? v.settings : f));
       })
-      .catch((e) => setError(errorText(e, "Couldn't load the settings. The server may be waking up; try again in a minute.")));
+      .catch((e) => {
+        if (!before) setError(errorText(e, "Couldn't load the settings. The server may be waking up; try again in a minute."));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const changed = useMemo(() => !!form && !!view && JSON.stringify(form) !== JSON.stringify(view.settings), [form, view]);
