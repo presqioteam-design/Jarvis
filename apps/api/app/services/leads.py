@@ -21,7 +21,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 from ..firebase import col, db
 from ..timeutil import now_utc
-from . import activity, categories, crawler, keepalive, sources, telegram
+from . import activity, categories, crawler, keepalive, prefs, sources, telegram
 
 log = logging.getLogger(__name__)
 SAME_PLACE_M = 200      # two results this close with similar names are one hotel
@@ -118,7 +118,9 @@ async def run_campaign(campaign_id: str) -> None:
 async def _run_campaign(campaign_id: str) -> None:
     ref = col("campaigns").document(campaign_id)
     camp = ref.get().to_dict()
-    cats = categories.resolve(camp.get("category"))
+    # "all" means the kinds switched on in Settings; naming one kind always works
+    named = camp.get("category") not in (None, categories.ALL)
+    cats = categories.resolve(camp.get("category")) if named else prefs.enabled_categories()
     what = categories.label_of(camp.get("category"))
     try:
         city = camp.get("city")

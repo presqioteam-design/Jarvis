@@ -8,6 +8,7 @@ import re
 
 from ..config import get_settings
 from ..firebase import col
+from . import categories
 
 # The tick cron runs every 30 min, 9:30 AM–8 PM IST, Monday–Saturday (apps/cron/wrangler.toml),
 # so sending can only happen inside that.
@@ -76,3 +77,38 @@ def save_sending(patch: dict) -> dict:
     }
     ref().set({"sending": saved, **({"autoSend": bool(patch["enabled"])} if patch.get("enabled") is not None else {})}, merge=True)
     return sending()
+
+
+# ── what to find ─────────────────────────────────────────────────────────────
+# Kinds switched off are stored (not the ones on), so a kind added later starts switched on.
+MAX_AREAS_PER_NIGHT = 10   # ~160 TomTom searches an area at most; TomTom's free plan allows ~2,500 a day
+
+
+def finding() -> dict:
+    doc = ref().get().to_dict() or {}
+    saved = doc.get("finding") or {}
+    off = set(saved.get("off", []))
+    return {
+        "categories": [c.key for c in categories.CATEGORIES if c.key not in off],
+        "exploreEnabled": doc.get("exploreEnabled", True),
+        "areasPerNight": saved.get("areasPerNight", get_settings().explore_areas_per_night),
+    }
+
+
+def enabled_categories() -> list[categories.Category]:
+    on = set(finding()["categories"])
+    return [c for c in categories.CATEGORIES if c.key in on]
+
+
+def save_finding(patch: dict) -> dict:
+    cfg = finding() | {k: v for k, v in patch.items() if v is not None}
+    keys = [c.key for c in categories.CATEGORIES]
+    on = [k for k in cfg["categories"] if k in keys]
+    if not on:
+        raise ValueError("Keep at least one kind of business switched on.")
+    areas = int(cfg["areasPerNight"])
+    if not 1 <= areas <= MAX_AREAS_PER_NIGHT:
+        raise ValueError(f"Areas a night must be 1 to {MAX_AREAS_PER_NIGHT} (the free map searches allow about that many).")
+    ref().set({"finding": {"off": [k for k in keys if k not in on], "areasPerNight": areas},
+               **({"exploreEnabled": bool(patch["exploreEnabled"])} if patch.get("exploreEnabled") is not None else {})}, merge=True)
+    return finding()

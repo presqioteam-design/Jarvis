@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { errorText, getSending, saveSending, type SendingSettings, type SendingView } from "../lib/api";
+import {
+  errorText, getFinding, getSending, prioritiseCity, saveFinding, saveSending, skipCity,
+  type FindingSettings, type FindingView, type SendingSettings, type SendingView,
+} from "../lib/api";
 import Icon from "../components/Icon";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -34,6 +37,7 @@ export default function Settings() {
         </div>
       </header>
       <SendingSection />
+      <FindingSection />
     </div>
   );
 }
@@ -225,6 +229,178 @@ function SendingSection() {
         <button className="btn primary" type="button" disabled={!changed || busy || days === 0} onClick={save}>
           {busy ? "Saving…" : "Save"}
         </button>
+      </div>
+    </section>
+  );
+}
+
+// ── section 2: what to find ────────────────────────────────────────────────
+
+let lastFinding: FindingView | null = null;
+
+function FindingSection() {
+  const [view, setViewState] = useState<FindingView | null>(lastFinding);
+  const [form, setForm] = useState<FindingSettings | null>(lastFinding?.settings ?? null);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const [newCity, setNewCity] = useState("");
+  const setView = (v: FindingView) => {
+    lastFinding = v;
+    setViewState(v);
+  };
+
+  useEffect(() => {
+    const before = lastFinding;
+    getFinding()
+      .then((v) => {
+        setView(v);
+        setForm((f) => (!f || !before || JSON.stringify(f) === JSON.stringify(before.settings) ? v.settings : f));
+      })
+      .catch((e) => {
+        if (!before) setError(errorText(e, "Couldn't load these settings. The server may be waking up; try again in a minute."));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const changed = useMemo(() => !!form && !!view && JSON.stringify(form) !== JSON.stringify(view.settings), [form, view]);
+
+  if (!form || !view) {
+    return (
+      <section className="card settings-card">
+        <h2>What to find</h2>
+        {error ? <p className="error" role="alert">{error}</p> : <p className="muted"><span className="spinner" /> Loading…</p>}
+      </section>
+    );
+  }
+
+  const on = new Set(form.categories);
+  const toggleKind = (key: string) => {
+    setNote("");
+    setForm({ ...form, categories: on.has(key) ? form.categories.filter((k) => k !== key) : [...form.categories, key] });
+  };
+
+  async function act(label: string, fn: () => Promise<FindingView & { note?: string }>, keepForm = false) {
+    setBusy(label);
+    setError("");
+    setNote("");
+    try {
+      const v = await fn();
+      setView(v);
+      if (!keepForm) setForm(v.settings);
+      else setForm((f) => (f ? { ...f, exploreEnabled: v.settings.exploreEnabled } : f));
+      if (v.note) setNote(v.note);
+      return true;
+    } catch (e) {
+      setError(errorText(e, "That didn't work. Check your connection and try again."));
+      return false;
+    } finally {
+      setBusy("");
+    }
+  }
+
+  // the explorer switch saves at once, like "pause explore" / "resume explore" on Telegram
+  const toggleExplorer = () => act("explore", () => saveFinding({ exploreEnabled: !form.exploreEnabled }), true);
+  const addCity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newCity.trim() && (await act("add", () => prioritiseCity(newCity.trim()), true))) setNewCity("");
+  };
+
+  const searchesPerNight = form.areasPerNight * Math.round((form.categories.length / view.categories.length) * 110);
+
+  return (
+    <section className="card settings-card" aria-labelledby="finding-title">
+      <div>
+        <h2 id="finding-title">What to find</h2>
+        <p className="muted small">
+          The kinds switched on are what “All businesses” scans and the night explorer search for. You can still scan
+          any one kind by naming it, e.g. “scan factories in Patancheru 3km”.
+        </p>
+      </div>
+
+      <div className="kind-grid" role="group" aria-label="Kinds of business">
+        {view.categories.map((c) => (
+          <label key={c.key} className={`kind ${on.has(c.key) ? "on" : ""}`}>
+            <input type="checkbox" checked={on.has(c.key)} onChange={() => toggleKind(c.key)} />
+            <span>{c.label}</span>
+          </label>
+        ))}
+      </div>
+      <div className="row-links small">
+        <button type="button" className="link-btn" onClick={() => setForm({ ...form, categories: view.categories.map((c) => c.key) })}>Switch all on</button>
+        <span className="muted">{form.categories.length} of {view.categories.length} on</span>
+      </div>
+
+      <div className="settings-sub">
+        <div className="settings-head">
+          <div>
+            <h3>Night explorer</h3>
+            <p className="muted small">Searches new areas of India's biggest cities every night, 12:30–5 AM, and tells you in the morning.</p>
+          </div>
+          <button type="button" role="switch" aria-checked={form.exploreEnabled} aria-label="Night explorer"
+            className={`switch ${form.exploreEnabled ? "on" : ""}`} onClick={toggleExplorer} disabled={busy === "explore"}>
+            <span />
+          </button>
+        </div>
+        <div className={`explore-row ${form.exploreEnabled ? "" : "is-off"}`}>
+          <div className="field">
+            <label htmlFor="areas-night">Areas a night</label>
+            <select id="areas-night" className="input" value={form.areasPerNight}
+              onChange={(e) => setForm({ ...form, areasPerNight: Number(e.target.value) })}>
+              {Array.from({ length: view.maxAreasPerNight }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+          <p className="muted small">
+            About {searchesPerNight.toLocaleString()} map searches a night at most, of the 2,500 free each day.
+            {view.tonight.areas > 0 && <> Last night: {view.tonight.areas} areas, {view.tonight.added} new businesses with an email.</>}
+          </p>
+        </div>
+      </div>
+
+      {error && <p className="error" role="alert">{error}</p>}
+      <div className="settings-actions">
+        <button className="btn" type="button" disabled={!changed || !!busy} onClick={() => { setForm(view.settings); setError(""); }}>Undo changes</button>
+        <button className="btn primary" type="button" disabled={!changed || !!busy || form.categories.length === 0}
+          onClick={() => act("save", () => saveFinding({ categories: form.categories, areasPerNight: form.areasPerNight }))}>
+          {busy === "save" ? "Saving…" : "Save"}
+        </button>
+      </div>
+
+      <div className="settings-sub">
+        <h3>City queue</h3>
+        <p className="muted small">The explorer works down this list. Move a city to the front, skip one, or add a new one.</p>
+        <form className="add-city" onSubmit={addCity}>
+          <input className="input" placeholder="Add a city, e.g. Warangal" value={newCity} onChange={(e) => setNewCity(e.target.value)} aria-label="City to add" />
+          <button className="btn" type="submit" disabled={!newCity.trim() || !!busy}>{busy === "add" ? "Adding…" : "Add and put first"}</button>
+        </form>
+        {note && <p className="saved-note">{note}</p>}
+        <ol className="city-queue">
+          {view.queue.map((c, i) => {
+            const pct = c.areas ? Math.round((c.areasDone / c.areas) * 100) : 0;
+            return (
+              <li key={c.id} className={c.skipped ? "skipped" : ""}>
+                <span className="q-num">{i + 1}</span>
+                <div className="q-main">
+                  <div className="q-name">{c.city}{c.skipped && <span className="cat-tag muted-tag">Skipped</span>}</div>
+                  <div className="muted small">
+                    {!c.areasListed ? "Areas get listed when the explorer reaches it"
+                      : c.areasDone === c.areas ? `All ${c.areas} areas searched`
+                      : `${c.areasDone} of ${c.areas} areas fully searched${c.next ? ` · next: ${c.next}` : ""}`}
+                  </div>
+                  {c.areasListed && <div className="q-bar"><span style={{ width: `${pct}%` }} /></div>}
+                </div>
+                <div className="q-actions">
+                  {!c.skipped && i > 0 && (
+                    <button className="btn small-btn" disabled={!!busy} onClick={() => act(`front-${c.id}`, () => prioritiseCity(c.city), true)}>Move to front</button>
+                  )}
+                  <button className="btn small-btn" disabled={!!busy} onClick={() => act(`skip-${c.id}`, () => skipCity(c.id, !c.skipped), true)}>
+                    {c.skipped ? "Include" : "Skip"}
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
       </div>
     </section>
   );

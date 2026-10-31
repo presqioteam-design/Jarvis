@@ -26,7 +26,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from ..config import get_settings
 from ..firebase import col, db
 from ..timeutil import now_local, now_utc
-from . import activity, categories, keepalive, leads, sources, telegram
+from . import activity, categories, keepalive, leads, prefs, sources, telegram
 
 log = logging.getLogger(__name__)
 OVERPASS = ["https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass-api.de/api/interpreter",
@@ -197,10 +197,10 @@ async def build_areas(ref, city: dict) -> int:
 
 # ── one area ─────────────────────────────────────────────────────────────────
 
-def pending_cats(area: dict) -> list[str]:
-    """Categories not yet searched in this area. Areas explored before categories existed did hotels."""
+def pending_cats(area: dict, wanted: list[str]) -> list[str]:
+    """Kinds (of those switched on) not yet searched in this area. Areas explored before categories existed did hotels."""
     done = set(area.get("cats") or (["hotels"] if area.get("status") == "done" else []))
-    return [c.key for c in categories.CATEGORIES if c.key not in done]
+    return [k for k in wanted if k not in done]
 
 
 async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
@@ -271,15 +271,18 @@ def night() -> dict:
     return state
 
 
-def next_area() -> tuple | None:
-    """(city ref, city doc, area index) to explore next: priority cities first, then by size.
-    A city is done when every area has been searched for every category."""
+def next_area(wanted: list[str] | None = None) -> tuple | None:
+    """(city ref, city doc, area index) to explore next: priority cities first, then by size; skipped
+    cities are left out. A city is done when every area has been searched for every kind switched on."""
+    wanted = wanted if wanted is not None else prefs.finding()["categories"]
     cities = sorted(col("explore").stream(), key=lambda d: (-d.to_dict().get("priority", 0), d.to_dict().get("order", 999)))
     for d in cities:
         c = d.to_dict()
+        if c.get("skipped"):
+            continue
         if not c.get("areasBuilt"):
             return d.reference, c, None
-        idx = next((i for i, a in enumerate(c["areas"]) if pending_cats(a)), None)
+        idx = next((i for i, a in enumerate(c["areas"]) if pending_cats(a, wanted)), None)
         if idx is not None:
             return d.reference, c, idx
         if not c.get("done"):
@@ -301,7 +304,7 @@ def tick() -> str:
     if busy():
         return "still exploring the previous area"
     state = night()
-    if state["areas"] >= get_settings().explore_areas_per_night:
+    if state["areas"] >= prefs.finding()["areasPerNight"]:
         return "tonight's areas are done"
     _running = asyncio.create_task(_run_one())
     return "started"
@@ -313,7 +316,8 @@ async def _run_one() -> None:
             if not any(True for _ in col("explore").limit(1).stream()):
                 n = await build_cities()
                 activity.log("lead_found", f"Explorer: listed the top {n} cities to explore.")
-            pick = next_area()
+            wanted = prefs.finding()["categories"]
+            pick = next_area(wanted)
             if pick is None:
                 return await telegram.send("🌍 Explorer: every listed city has been explored. Add a city with “explore <city> next”.")
             ref, city, idx = pick
@@ -323,7 +327,7 @@ async def _run_one() -> None:
                 city = ref.get().to_dict()
                 idx = 0
             area = city["areas"][idx]
-            cats = pending_cats(area)
+            cats = pending_cats(area, wanted)
             stats = await explore_area(city["city"], area, cats)
             done_cats = sorted(set(area.get("cats") or (["hotels"] if area.get("status") == "done" else [])) | set(cats))
             city["areas"][idx] |= {"status": "done", "cats": done_cats, "doneAt": now_utc().isoformat(),
@@ -374,10 +378,11 @@ def status() -> str:
     cities = [d.to_dict() for d in col("explore").stream()]
     if not cities:
         return "🌍 Explorer hasn't started yet. It runs at night (12:30–5 AM IST) and lists the top cities on its first run."
+    find = prefs.finding()
     done_c = sum(1 for c in cities if c.get("done"))
     areas = [a for c in cities for a in c.get("areas", [])]
-    done_a = sum(1 for a in areas if not pending_cats(a))
-    nxt = next_area()
+    done_a = sum(1 for a in areas if not pending_cats(a, find["categories"]))
+    nxt = next_area(find["categories"])
     if nxt is None:
         where = "every listed city is done"
     elif nxt[2] is None:
@@ -385,7 +390,7 @@ def status() -> str:
     else:
         where = f"{nxt[1]['city']}, next area {nxt[1]['areas'][nxt[2]]['name']}"
     state = night()
-    return (f"🌍 Explorer is {'ON' if enabled() else 'PAUSED'}: {get_settings().explore_areas_per_night} areas a night, 12:30–5 AM IST.\n"
+    return (f"🌍 Explorer is {'ON' if find['exploreEnabled'] else 'PAUSED'}: {find['areasPerNight']} areas a night, 12:30–5 AM IST.\n"
             f"Cities: {done_c} of {len(cities)} done · areas explored: {done_a} of {len(areas)} listed so far.\n"
             f"Tonight so far: {state['areas']} areas, {state['added']} new businesses with an email.\nNow on: {where}")
 
@@ -396,7 +401,7 @@ async def prioritise(name: str) -> str:
     stamp = int(datetime.now().timestamp())
     for d in col("explore").stream():
         if leads.slug(d.to_dict()["city"]) == want:
-            d.reference.update({"priority": stamp, "done": False})
+            d.reference.update({"priority": stamp, "done": False, "skipped": False})
             return f"🌍 {d.to_dict()['city']} is next in line for the explorer (tonight from 12:30 AM)."
     try:
         place = await sources.geocode(f"{name}, India")
@@ -408,3 +413,30 @@ async def prioritise(name: str) -> str:
         "priority": stamp, "areas": [], "areasBuilt": False, "done": False, "createdAt": now_utc().isoformat(),
     })
     return f"🌍 Added {city} and put it first in line for the explorer (tonight from 12:30 AM)."
+
+
+# ── the Settings page ────────────────────────────────────────────────────────
+
+def queue() -> list[dict]:
+    """Every listed city in the order the explorer takes them, with its progress."""
+    wanted = prefs.finding()["categories"]
+    docs = sorted(col("explore").stream(), key=lambda d: (-d.to_dict().get("priority", 0), d.to_dict().get("order", 999)))
+    out = []
+    for d in docs:
+        c = d.to_dict()
+        areas = c.get("areas", [])
+        left = [a for a in areas if pending_cats(a, wanted)]
+        out.append({
+            "id": d.id, "city": c["city"], "skipped": bool(c.get("skipped")), "prioritised": bool(c.get("priority")),
+            "areasListed": c.get("areasBuilt", False), "areas": len(areas), "areasDone": len(areas) - len(left),
+            "next": left[0]["name"] if left else None,
+            "found": sum(a.get("added", 0) for a in areas),
+        })
+    return out
+
+
+def set_skipped(city_id: str, skipped: bool) -> None:
+    ref = col("explore").document(city_id)
+    if not ref.get().exists:
+        raise ValueError("That city isn't in the explorer's list.")
+    ref.update({"skipped": skipped})

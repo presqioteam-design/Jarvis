@@ -76,3 +76,20 @@ export type SendingView = {
 };
 export const getSending = () => call<SendingView>("/settings/sending");
 export const saveSending = (patch: Partial<SendingSettings>) => call<SendingView>("/settings/sending", patch);
+
+export type FindingSettings = { categories: string[]; exploreEnabled: boolean; areasPerNight: number };
+export type ExploreCity = {
+  id: string; city: string; skipped: boolean; prioritised: boolean; areasListed: boolean;
+  areas: number; areasDone: number; next: string | null; found: number;
+};
+export type FindingView = {
+  settings: FindingSettings;
+  categories: { key: string; label: string }[];
+  maxAreasPerNight: number;
+  queue: ExploreCity[];
+  tonight: { areas: number; added: number; done: string[] };
+};
+export const getFinding = () => call<FindingView>("/settings/finding");
+export const saveFinding = (patch: Partial<FindingSettings>) => call<FindingView>("/settings/finding", patch);
+export const prioritiseCity = (city: string) => call<FindingView & { note: string }>("/settings/explore/prioritise", { city });
+export const skipCity = (id: string, skipped: boolean) => call<FindingView>("/settings/explore/skip", { id, skipped });
