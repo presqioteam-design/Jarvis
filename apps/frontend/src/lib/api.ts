@@ -15,13 +15,16 @@ export class ApiError extends Error {
 export const errorText = (e: unknown, fallback: string) =>
   e instanceof ApiError && e.message && e.status !== 401 && (e.status < 500 || e.status === 503) ? e.message : fallback;
 
-async function call<T>(path: string, body: unknown): Promise<T> {
+/** POSTs `body` as JSON; without a body it's a GET. */
+async function call<T>(path: string, body?: unknown): Promise<T> {
   const token = await auth.currentUser?.getIdToken();
-  const res = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify(body),
-  });
+  const res = await fetch(`${API_URL}${path}`, body === undefined
+    ? { headers: { Authorization: `Bearer ${token}` } }
+    : {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
   if (!res.ok) {
     // FastAPI sends {"detail": "..."}; show that sentence when there is one
     const text = await res.text();
@@ -53,3 +56,23 @@ export const resumeScan = (id: string) => call<{ ok: true }>(`/campaigns/${id}/r
 export const setLeadStatus = (ids: string[], status: "new" | "ready" | "not_interested") => call<{ ok: true }>("/leads/status", { ids, status });
 export const approveAllWithEmail = (city: string, area: string | null, category: string | null = null) =>
   call<{ approved: number }>("/leads/approve-all", { city, area, category });
+
+export type SendingSettings = {
+  enabled: boolean;
+  perRun: number;
+  dailyAuto: number;
+  dailyCap: number;
+  from: string;
+  until: string;
+  days: number[];          // 0 = Monday … 5 = Saturday
+  followUps: boolean;
+  followUpDays: [number, number];
+};
+export type SendingView = {
+  settings: SendingSettings;
+  runsPerDay: number;
+  sentToday: number;
+  limits: { earliest: string; latest: string; maxPerRun: number; maxDaily: number; days: number[] };
+};
+export const getSending = () => call<SendingView>("/settings/sending");
+export const saveSending = (patch: Partial<SendingSettings>) => call<SendingView>("/settings/sending", patch);

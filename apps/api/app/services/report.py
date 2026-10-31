@@ -11,7 +11,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from ..config import get_settings
 from ..firebase import col
 from ..timeutil import now_local
-from . import leads, outreach, telegram, usage, voice
+from . import leads, outreach, prefs, telegram, usage, voice
 
 
 def count(q) -> int:
@@ -55,7 +55,7 @@ def written(r: dict) -> str:
     lines = [
         f"🌙 Jarvis daily report, {now_local().strftime('%A %d %b')}",
         "",
-        f"📤 Emails sent today: {r['first'] + r['followUps']} ({r['first']} new, {r['followUps']} follow-ups) of {s.daily_email_cap} allowed",
+        f"📤 Emails sent today: {r['first'] + r['followUps']} ({r['first']} new, {r['followUps']} follow-ups) of {prefs.sending()['dailyCap']} allowed",
         f"📥 Replies today: {sum(rep.values())}"
         + (f" (🔥 {rep['interested']} interested, ❓ {rep['question']} questions, 👋 {rep['not_now']} not now, 🚫 {rep['unsubscribe']} stop, ✉️ {rep['other']} other)" if rep else ""),
         *([f"📭 Bounced (address doesn't exist): {r['bounced']}"] if r["bounced"] else []),

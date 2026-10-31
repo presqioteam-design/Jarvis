@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from google.api_core.exceptions import ResourceExhausted
 
 from .config import get_settings
-from .routers import campaigns, chat, jobs, telegram, voice
+from .routers import campaigns, chat, jobs, settings, telegram, voice
 from .services import chat as chat_service, inbox, leads, telegram as telegram_service
 
 logging.basicConfig(level=logging.INFO)
@@ -61,6 +61,7 @@ async def database_quota_used_up(_request: Request, _exc: ResourceExhausted):
 app.include_router(campaigns.router)
 app.include_router(chat.router)
 app.include_router(jobs.router)
+app.include_router(settings.router)
 app.include_router(telegram.router)
 app.include_router(voice.router)
 

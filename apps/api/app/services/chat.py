@@ -16,7 +16,7 @@ from google.api_core.exceptions import ResourceExhausted
 from ..config import get_settings
 from ..firebase import col, db
 from ..timeutil import now_local, now_utc
-from . import activity, categories, explore, inbox, leads, llm, outreach, presqio, report, telegram, usage, voice
+from . import activity, categories, explore, inbox, leads, llm, outreach, prefs, presqio, report, telegram, usage, voice
 
 log = logging.getLogger(__name__)
 _tasks: set[asyncio.Task] = set()   # keep background scans alive
@@ -96,7 +96,7 @@ def context_block() -> str:
     ) or "- none"
     return (
         f"PIPELINE (all areas): {pipeline}\n"
-        f"EMAILS TODAY: {outreach.sent_today()} of {s.daily_email_cap} daily limit; "
+        f"EMAILS TODAY: {outreach.sent_today()} of {prefs.sending()['dailyCap']} daily limit; "
         f"follow-ups due now: {len(outreach.due_follow_ups(100))}; sending right now: {'yes' if outreach.busy() else 'no'}\n"
         f"AUTO-SEND: {'on' if outreach.auto_enabled() else 'paused'} ({outreach.auto_window()})\n"
         f"GEMINI USAGE TODAY: {usage.summary()}\n"
@@ -302,7 +302,7 @@ def run_action(action: dict) -> tuple[bool, str]:
     if name == "auto_status":
         s = get_settings()
         return False, (f"🤖 Auto-send is {'ON' if outreach.auto_enabled() else 'PAUSED'}: {outreach.auto_window()}.\n"
-                       f"Today: {outreach.sent_today()} of {s.daily_email_cap} emails sent; follow-ups due now: {len(outreach.due_follow_ups(100))}."
+                       f"Today: {outreach.sent_today()} of {prefs.sending()['dailyCap']} emails sent; follow-ups due now: {len(outreach.due_follow_ups(100))}."
                        + ("\nA batch is sending right now." if outreach.busy() else ""))
     if name == "report":
         task = asyncio.create_task(report.send_daily())

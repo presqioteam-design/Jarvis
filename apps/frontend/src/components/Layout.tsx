@@ -10,7 +10,7 @@ const NAV: { to: string; label: string; icon: IconName; soon?: boolean }[] = [
   { to: "/leads", label: "Leads", icon: "leads" },
   { to: "/voice", label: "Talk to Jarvis", icon: "mic" },
   { to: "/chat", label: "Ask Jarvis", icon: "chat" },
-  { to: "/settings", label: "Settings", icon: "settings", soon: true },
+  { to: "/settings", label: "Settings", icon: "settings" },
 ];
 
 /** Phone tab bar: Jarvis sits in the middle as the raised main button, like an app's home action. */
@@ -89,6 +89,9 @@ export default function Layout() {
           ) : (
             <span className="avatar fallback">{(user?.displayName ?? "A")[0]}</span>
           )}
+          <NavLink to="/settings" className={({ isActive }) => `icon-btn ${isActive ? "active" : ""}`} title="Settings" aria-label="Settings">
+            <Icon name="settings" size={20} />
+          </NavLink>
           <button className="icon-btn" onClick={logOut} title="Sign out" aria-label="Sign out">
             <Icon name="logout" size={20} />
           </button>

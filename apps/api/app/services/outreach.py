@@ -14,11 +14,11 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from ..config import get_settings
 from ..firebase import col
 from ..timeutil import now_local, now_utc
-from . import activity, inbox, keepalive, leads, mailer, telegram, templates
+from . import activity, inbox, keepalive, leads, mailer, prefs, telegram, templates
 
 log = logging.getLogger(__name__)
-FOLLOW_UP_GAP_DAYS = [3, 4]     # follow-up 1 three days after the first email, follow-up 2 four days later
 PAUSE_SECONDS = (20, 45)
+WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 _running: asyncio.Task | None = None
 
@@ -75,23 +75,24 @@ def due_follow_ups(limit: int) -> list[dict]:
 
 
 async def send_first_emails(count: int, area: str | None = None) -> None:
-    cap = get_settings().daily_email_cap - sent_today()
+    limit = prefs.sending()["dailyCap"]
+    cap = limit - sent_today()
     if cap <= 0:
-        await telegram.send(f"⚠️ Daily limit reached ({get_settings().daily_email_cap} emails). I'll send more tomorrow.")
+        await telegram.send(f"⚠️ Daily limit reached ({limit} emails). I'll send more tomorrow.")
         return
     targets = pick_first_emails(min(count, cap), area)
     if not targets:
         where = f" in {area}" if area else ""
         await telegram.send(f"No leads{where} with an email are left to contact. Run a scan or approve more leads.")
         return
-    note = f" (capped at today's limit of {get_settings().daily_email_cap})" if count > cap else ""
+    note = f" (capped at today's limit of {limit})" if count > cap else ""
     await telegram.send(f"📤 Sending {len(targets)} emails{note}. About {len(targets) * 32 // 60 + 1} min; I'll send the list when done.")
     await run(targets, step=0)
 
 
 async def send_follow_ups(count: int = 50) -> None:
     await inbox.check()   # never follow up on someone who has replied or asked us to stop
-    targets = due_follow_ups(min(count, get_settings().daily_email_cap - sent_today()))
+    targets = due_follow_ups(min(count, prefs.sending()["dailyCap"] - sent_today()))
     if not targets:
         await telegram.send("No follow-ups are due right now.")
         return
@@ -112,39 +113,43 @@ async def run(targets: list[dict], step: int | None) -> None:
 # ── automatic sending ────────────────────────────────────────────────────────
 
 def auto_enabled() -> bool:
-    snap = col("settings").document("main").get()
-    return (snap.to_dict() or {}).get("autoSend", True) if snap.exists else True
+    return prefs.sending()["enabled"]
 
 
 def set_auto(on: bool) -> None:
-    col("settings").document("main").set({"autoSend": on}, merge=True)
+    prefs.ref().set({"autoSend": on}, merge=True)
+
+
+def days_text(days: list[int]) -> str:
+    if days == list(range(days[0], days[-1] + 1)) and len(days) > 2:
+        return f"{WEEKDAYS[days[0]]}–{WEEKDAYS[days[-1]]}"
+    return ", ".join(WEEKDAYS[d] for d in days)
 
 
 def auto_window() -> str:
-    s = get_settings()
-    return f"{s.auto_send_per_run} every 30 min, {s.auto_send_from}–{s.auto_send_until} Mon–Sat, up to {s.auto_daily_cap} a day"
+    c = prefs.sending()
+    return f"{c['perRun']} every 30 min, {c['from']}–{c['until']} {days_text(c['days'])}, up to {c['dailyAuto']} a day"
 
 
 def auto_send() -> str:
     """Called by the cron every 30 min. Starts a batch, or says why not."""
-    s = get_settings()
+    c = prefs.sending()
     now = now_local()
-    if not auto_enabled():
+    if not c["enabled"]:
         return "paused"
-    if now.weekday() == 6 or not (s.auto_send_from <= now.strftime("%H:%M") <= s.auto_send_until):
+    if now.weekday() not in c["days"] or not (c["from"] <= now.strftime("%H:%M") <= c["until"]):
         return "outside sending hours"
     if busy():
         return "a batch is already sending"
-    room = min(s.auto_daily_cap, s.daily_email_cap) - sent_today()
+    room = min(c["dailyAuto"], c["dailyCap"]) - sent_today()
     if room <= 0:
         return "daily limit reached"
-    return "started" if start(_auto_batch(room)) else "a batch is already sending"
+    return "started" if start(_auto_batch(room, c["perRun"], c["followUps"])) else "a batch is already sending"
 
 
-async def _auto_batch(room: int) -> None:
-    per_run = get_settings().auto_send_per_run
+async def _auto_batch(room: int, per_run: int, follow_ups: bool) -> None:
     await inbox.check()   # replies first: never email someone who just answered
-    follow = due_follow_ups(min(per_run, room))
+    follow = due_follow_ups(min(per_run, room)) if follow_ups else []
     for t in follow:
         t["to"] = t["emailedTo"]
     first = pick_first_emails(min(per_run, room - len(follow)), None) if room > len(follow) else []
@@ -169,6 +174,8 @@ async def _nothing_left_once_a_day() -> None:
 
 async def _send_all(targets: list[dict], step: int | None) -> tuple[list[dict], list[str]]:
     sent, failed = [], []
+    f1, f2 = prefs.sending()["followUpDays"]
+    gaps = [f1, f2 - f1]   # days until follow-up 1, then until follow-up 2
     for i, lead in enumerate(targets):
         n = lead.get("followUps", 0) + 1 if step is None else step
         email = templates.render(n, lead["name"], lead.get("area") or templates.area_from(lead.get("address", "")),
@@ -186,7 +193,7 @@ async def _send_all(targets: list[dict], step: int | None) -> tuple[list[dict], 
                 failed.append("Stopped after 2 failures in a row; the rest weren't tried.")
                 break
             continue
-        record(lead, n, email, msg_id, thread_id)
+        record(lead, n, email, msg_id, thread_id, gaps)
         sent.append(lead)
         if i < len(targets) - 1:
             await asyncio.sleep(random.uniform(*PAUSE_SECONDS))
@@ -206,11 +213,11 @@ async def _report(groups: list[tuple[str, list[dict]]], failed: list[str]) -> No
             lines += [f"{i}. {l['name']} ({l.get('area') or '?'}): {l['to']}" for i, l in enumerate(sent, 1)]
     if failed:
         lines += ["", f"❌ {len(failed)} failed:"] + failed
-    lines += ["", f"Today: {sent_today()} of {get_settings().daily_email_cap} emails used."]
+    lines += ["", f"Today: {sent_today()} of {prefs.sending()['dailyCap']} emails used."]
     await telegram.send("\n".join(lines))
 
 
-def record(lead: dict, n: int, email: templates.Email, msg_id: str, thread_id: str | None) -> None:
+def record(lead: dict, n: int, email: templates.Email, msg_id: str, thread_id: str | None, gaps: list[int]) -> None:
     now = now_utc()
     col("messages").add({
         "leadId": lead["id"], "direction": "out", "to": lead["to"], "subject": email.subject, "body": email.body,
@@ -219,7 +226,7 @@ def record(lead: dict, n: int, email: templates.Email, msg_id: str, thread_id: s
     patch = {
         "status": "emailed", "followUps": n, "lastContactAt": now.isoformat(), "updatedAt": now.isoformat(),
         "lastMessageId": msg_id, "emailedTo": lead["to"], **({"threadId": thread_id} if thread_id else {}),
-        "nextActionAt": (now + timedelta(days=FOLLOW_UP_GAP_DAYS[n])).isoformat() if n < len(FOLLOW_UP_GAP_DAYS) else None,
+        "nextActionAt": (now + timedelta(days=gaps[n])).isoformat() if n < len(gaps) else None,
     }
     col("leads").document(lead["id"]).update(patch)
     label = "Emailed" if n == 0 else f"Follow-up {n} to"
