@@ -69,6 +69,15 @@ def by_status(status: str, limit: int = 20) -> list[dict]:
 # big city uses most of that, so: one city scan a day, one scan at a time.
 
 QUOTA_STOPPED = "Firestore's free daily limit was reached. Progress is saved: press Resume after 12:30 PM IST."
+# TomTom's free plan allows about 2,500 searches a day and the night explorer uses up to ~950 of them.
+# Searching every category costs ~25 searches per square, so a big scan pauses here and resumes later.
+SCAN_SEARCH_BUDGET = 1300
+TOMTOM_STOPPED = ("Paused to stay within TomTom's free daily map searches. Progress is saved: "
+                  "press Resume tomorrow to carry on from here.")
+
+
+class ScanPaused(Exception):
+    pass
 
 
 def scan_blocked(whole_city: bool) -> str:
@@ -84,14 +93,14 @@ def scan_blocked(whole_city: bool) -> str:
     return ""
 
 
-def create_campaign(place: str, radius_m: int | None, category: str = categories.DEFAULT) -> str:
+def create_campaign(place: str, radius_m: int | None, category: str = categories.ALL) -> str:
     """radius_m=None scans the whole city/town; otherwise a square around the spot."""
     _, ref = col("campaigns").add({
         "name": place,
         "kind": "area" if radius_m else "city",
         "area": {"label": place, "lat": 0, "lon": 0, "radiusM": radius_m or 0},
-        "category": categories.get(category).key,
-        "query": categories.get(category).key,
+        "category": category if category == categories.ALL else categories.get(category).key,
+        "query": category,
         "status": "searching",
         "createdAt": now_utc().isoformat(),
         "stats": {"found": 0, "withEmail": 0, "withPhone": 0, "emailed": 0, "replied": 0, "interested": 0},
@@ -109,7 +118,8 @@ async def run_campaign(campaign_id: str) -> None:
 async def _run_campaign(campaign_id: str) -> None:
     ref = col("campaigns").document(campaign_id)
     camp = ref.get().to_dict()
-    cat = categories.get(camp.get("category"))
+    cats = categories.resolve(camp.get("category"))
+    what = categories.label_of(camp.get("category"))
     try:
         city = camp.get("city")
         if not city:
@@ -127,11 +137,11 @@ async def _run_campaign(campaign_id: str) -> None:
 
         scan = camp["scan"]
         if scan["phase"] == "map":
-            await scan_squares(ref, scan, campaign_id, city, cat)
+            await scan_squares(ref, scan, campaign_id, city, cats)
             scan["phase"] = "osm"
             ref.update({"scan.phase": "osm"})
         if scan["phase"] == "osm":
-            await add_osm(await sources.osm_places(camp["box"], [cat]), campaign_id, city, camp["box"])
+            await add_osm(await sources.osm_places(camp["box"], cats), campaign_id, city, camp["box"])
             ref.update({"scan.phase": "websites"})
 
         if camp.get("kind") == "area":
@@ -153,11 +163,14 @@ async def _run_campaign(campaign_id: str) -> None:
         })
         new = scan.get("found", 0)
         text = (
-            f"Scan of {camp['name']} for {cat.label.lower()} finished: {new} new with an email. "
+            f"Scan of {camp['name']} for {what} finished: {new} new with an email. "
             f"The area now has {totals['withEmail']} businesses to email across {totals['areas']} areas."
         )
         activity.log("lead_found", text)
         await telegram.send(f"🔎 {text}")
+    except ScanPaused:
+        ref.update({"status": "failed", "error": TOMTOM_STOPPED})
+        await telegram.send(f"⏸ Scan of {camp['name']}: {TOMTOM_STOPPED}")
     except ResourceExhausted:
         ref.update({"status": "failed", "error": QUOTA_STOPPED})
         await telegram.send(f"⏸ Scan of {camp['name']} paused: {QUOTA_STOPPED}")
@@ -196,21 +209,43 @@ def width_km(box: dict) -> float:
     return (box["e"] - box["w"]) * 111 * math.cos(math.radians(box["s"]))
 
 
-async def scan_squares(ref, scan: dict, campaign_id: str, city: str, cat: categories.Category) -> None:
-    queue, pending = scan["queue"], []
+async def scan_squares(ref, scan: dict, campaign_id: str, city: str, cats: list[categories.Category]) -> None:
+    """Every category in each square. Raises ScanPaused (progress saved) when this run's share of
+    TomTom's free daily searches is used, or TomTom refuses; Resume carries on from the same square."""
+    queue, pending, searches = scan["queue"], [], 0
+
+    async def checkpoint():
+        nonlocal pending
+        # save what these squares found before recording progress, so a resume doesn't lose it
+        scan["found"] += len(await save_reachable(pending, campaign_id, city))
+        pending = []
+        ref.update({"scan.queue": queue, "scan.squaresDone": scan["squaresDone"], "scan.found": scan["found"]})
+
     async with httpx.AsyncClient(timeout=30) as client:
         while queue:
             box = queue.pop(0)
-            places, full = await sources.tomtom_box(client, box, cat)
-            if full and width_km(box) > MIN_SQUARE_KM:
-                queue.extend(grid(box, width_km(box) / 2))
-            pending += places
+            # a smaller square only repeats the categories that filled its parent (usually restaurants)
+            todo = [c for c in cats if not box.get("only") or c.key in box["only"]]
+            found, full_keys = [], []
+            try:
+                for cat in todo:
+                    places, full = await sources.tomtom_box(client, box, cat)
+                    searches += len(cat.tomtom)
+                    found += places
+                    if full:
+                        full_keys.append(cat.key)
+            except sources.TomTomLimit:
+                queue.insert(0, box)   # do this square again on resume
+                await checkpoint()
+                raise ScanPaused()
+            if full_keys and width_km(box) > MIN_SQUARE_KM:
+                queue.extend(sq | {"only": full_keys} for sq in grid(box, width_km(box) / 2))
+            pending += found
             scan["squaresDone"] += 1
-            if scan["squaresDone"] % SAVE_EVERY == 0 or not queue:
-                # save what these squares found before recording progress, so a resume doesn't lose it
-                scan["found"] += len(await save_reachable(pending, campaign_id, city))
-                pending = []
-                ref.update({"scan.queue": queue, "scan.squaresDone": scan["squaresDone"], "scan.found": scan["found"]})
+            if scan["squaresDone"] % SAVE_EVERY == 0 or not queue or searches >= SCAN_SEARCH_BUDGET:
+                await checkpoint()
+            if queue and searches >= SCAN_SEARCH_BUDGET:
+                raise ScanPaused()
 
 
 async def save_reachable(found: list[dict], campaign_id: str, city: str, fallback_area: str = "") -> list[dict]:

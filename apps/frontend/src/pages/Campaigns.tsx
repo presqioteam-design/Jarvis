@@ -25,7 +25,7 @@ export default function Campaigns() {
   const [mode, setMode] = useState<"city" | "spot">("city");
   const [place, setPlace] = useState("");
   const [radius, setRadius] = useState(3);
-  const [category, setCategory] = useState<CategoryKey>("hotels");
+  const [category, setCategory] = useState<CategoryKey | "all">("all");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -59,8 +59,8 @@ export default function Campaigns() {
         <div>
           <h1 className="title">Find businesses</h1>
           <p className="muted sub">
-            Pick a kind of business and scan a whole city or one spot. Jarvis reads their websites and saves only the
-            ones with an email, grouped by area.
+            Scan a whole city or one spot for every kind of business (or just one). Jarvis reads their websites and
+            saves only the ones with an email, grouped by area.
           </p>
         </div>
       </header>
@@ -72,8 +72,9 @@ export default function Campaigns() {
         </div>
         <div className="field">
           <label htmlFor="category">Business</label>
-          <select id="category" className="input" value={category} onChange={(e) => setCategory(e.target.value as CategoryKey)}>
-            {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+          <select id="category" className="input" value={category} onChange={(e) => setCategory(e.target.value as CategoryKey | "all")}>
+            <option value="all">All businesses</option>
+            {CATEGORIES.map((c) => <option key={c.key} value={c.key}>Only {c.label.toLowerCase()}</option>)}
           </select>
         </div>
         <div className="field grow">
@@ -94,8 +95,8 @@ export default function Campaigns() {
         </button>
         <p className="muted small hint">
           {mode === "city"
-            ? "A whole-city scan can take 20–40 minutes. You can close this page; Jarvis messages you on Telegram when it's done."
-            : "Searches a square around the place, about a minute."}
+            ? "A whole-city scan of every kind of business can take an hour or more, and a big city may pause to stay within the free map searches and carry on when you press Resume the next day. You can close this page; Jarvis messages you on Telegram."
+            : "Searches a square around the place, a few minutes."}
         </p>
       </form>
 

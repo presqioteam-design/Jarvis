@@ -27,7 +27,8 @@ QUOTA_MESSAGE = (
 )
 
 SYSTEM = """You are Jarvis, the sales assistant for Presqio. You find businesses (hotels, hospitals, schools, restaurants,
-factories, stores, security agencies, gyms and salons, coaching centres), email them about Presqio,
+factories, stores, IT companies, corporate offices, security agencies, gyms and salons, coaching centres) that have
+an email, email them about Presqio,
 track replies and report to the admin (the Presqio owner) you are talking to. Call the admin "Boss" now and then.
 
 Reply with a JSON object only:
@@ -53,7 +54,7 @@ Rules:
 - "show / list leads (in X)" -> list_leads. status "new" means waiting for review (the default), "ready" means approved.
 - "approve 1 3 5" or "block 2" refer to the numbers in the LAST LIST below. "approve all (with email) in X" -> approve_all.
 - Never more than 50 emails per request.
-- A scan searches one category; if they don't say which, use "hotels".
+- A scan searches every category ("all") unless they name one kind of business.
 - Answer questions from the DATA below; never invent businesses, numbers or replies. If the data doesn't have it, say so.
 - Keep replies short: 1-4 sentences, or a short list. Plain text, no markdown tables.
 - If asked about Presqio itself, use only the PRODUCT FACTS.
@@ -166,10 +167,11 @@ HELP = """Here's what you can tell me:
 • approve 1 3 5 / block 2 — numbers from the last list
 • approve all with email in Banjara Hills
 
-🔎 Finding businesses (only ones with an email are saved)
-• scan hospitals in Gachibowli 2km — search around a spot
-• scan schools in Vijayawada — a whole city
-Categories: hotels, hospitals, schools, restaurants, factories, retail, security, gyms, coaching
+🔎 Finding businesses (every kind, only ones with an email are saved)
+• scan Gachibowli 2km — search around a spot
+• scan Vijayawada — a whole city
+• scan hospitals in Madhapur 3km — just one kind
+Kinds: hotels, hospitals, schools, restaurants, factories, retail, IT, offices, security, gyms, coaching
 
 ❓ Questions, e.g.
 • how many emails did we send today?
@@ -229,7 +231,7 @@ async def handle(text: str, channel: str) -> tuple[str, bool]:
 
     history = recent_history()
     system = SYSTEM.format(facts=presqio.FACTS, now=now_local().strftime("%A %d %b %Y, %H:%M"),
-                           category_keys="|".join(c.key for c in categories.CATEGORIES))
+                           category_keys="|".join([categories.ALL, *(c.key for c in categories.CATEGORIES)]))
     messages = [*history, {"role": "user", "content": f"DATA:\n{context_block()}\n\nADMIN: {text}"}]
     raw = await llm.complete(system, messages, max_tokens=1200, json=True)
     try:
@@ -326,12 +328,13 @@ def run_action(action: dict) -> tuple[bool, str]:
         radius = action.get("radius_km")
         if reason := leads.scan_blocked(whole_city=not radius):
             return False, f"⚠️ {reason}"
-        cat = categories.find(str(action.get("category") or "")) or categories.get(None)
-        campaign_id = leads.create_campaign(place, int(float(radius) * 1000) if radius else None, cat.key)
+        cat = categories.find(str(action.get("category") or ""))
+        key = cat.key if cat else categories.ALL
+        campaign_id = leads.create_campaign(place, int(float(radius) * 1000) if radius else None, key)
         task = asyncio.create_task(leads.run_campaign(campaign_id))
         _tasks.add(task)
         task.add_done_callback(_tasks.discard)
-        return False, (f"🔎 Scanning {place} for {cat.label.lower()} (only ones with an email are saved). "
+        return False, (f"🔎 Scanning {place} for {categories.label_of(key)} (only ones with an email are saved). "
                        "This can take a while; I'll message you when it's done.")
     return False, ""
 

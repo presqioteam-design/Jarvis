@@ -14,13 +14,16 @@ export const CATEGORIES = [
   { key: "restaurants", label: "Restaurants & cafés" },
   { key: "factories", label: "Factories & warehouses" },
   { key: "retail", label: "Supermarkets & retail" },
+  { key: "it", label: "IT & software companies" },
+  { key: "offices", label: "Corporate offices" },
   { key: "security", label: "Security agencies" },
   { key: "gyms", label: "Gyms, salons & spas" },
   { key: "coaching", label: "Coaching & training centres" },
 ] as const;
 export type CategoryKey = (typeof CATEGORIES)[number]["key"];
-/** Leads saved before categories existed are hotels. */
-export const categoryLabel = (key?: string) => CATEGORIES.find((c) => c.key === key)?.label ?? "Hotels";
+/** "all" is a scan of every category; leads saved before categories existed are hotels. */
+export const categoryLabel = (key?: string) =>
+  key === "all" ? "All businesses" : CATEGORIES.find((c) => c.key === key)?.label ?? "Hotels";
 
 /** users/{uid}/campaigns/{id} — one scan: a whole city, or a square around a spot */
 export interface Campaign {
@@ -29,7 +32,7 @@ export interface Campaign {
   city?: string;                 // set once the place is found on the map
   area: { label: string; lat: number; lon: number; radiusM: number };   // radiusM 0 = whole city
   query: string;                 // what to search for, e.g. "hotels"
-  category?: CategoryKey;        // missing on scans from before categories: hotels
+  category?: CategoryKey | "all"; // "all" = every category; missing on scans from before categories: hotels
   status: "searching" | "ready" | "failed" | "active" | "paused" | "done";
   error?: string;                // set when status is "failed"
   createdAt: string;

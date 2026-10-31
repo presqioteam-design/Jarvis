@@ -27,6 +27,8 @@ async def geocode(place: str) -> dict:
             f"{TOMTOM}/geocode/{place}.json",
             params={"key": get_settings().tomtom_api_key, "countrySet": "IN", "limit": 1},
         )
+        if r.status_code in (403, 429):
+            raise TomTomLimit()
         r.raise_for_status()
         results = r.json().get("results", [])
     if not results:
@@ -40,6 +42,10 @@ async def geocode(place: str) -> dict:
         "lon": top["position"]["lon"],
         "box": {"n": bb["topLeftPoint"]["lat"], "w": bb["topLeftPoint"]["lon"], "s": bb["btmRightPoint"]["lat"], "e": bb["btmRightPoint"]["lon"]},
     }
+
+
+class TomTomLimit(Exception):
+    """TomTom refused: the free daily searches are used up (or the key is over its rate)."""
 
 
 async def tomtom_box(client: httpx.AsyncClient, box: dict, cat: Category) -> tuple[list[dict], bool]:

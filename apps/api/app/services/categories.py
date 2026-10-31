@@ -62,6 +62,17 @@ CATEGORIES: list[Category] = [
              (("shop", "^(supermarket|department_store|mall)$"),), "",
              "stores like yours", "store",
              "It handles opening and closing shifts and part-time staff.", "store"),
+    Category("it", "IT & software companies", "IT company",
+             (("software company", "9352005"),),
+             (("office", "^(it|software|telecommunication)$"),), "",
+             "IT and software companies like yours", "office",
+             "It handles day and night shifts, and teams spread across more than one office.", "office"),
+    Category("offices", "Corporate offices", "company",
+             (("insurance company", "9352007"), ("construction company", "9352032"), ("real estate company", "9352009"),
+              ("transport company", "9352024"), ("business services", "9352039"), ("electronics company", "9352015")),
+             (("office", "^(company|insurance|estate_agent|logistics|financial|consulting|construction_company|accountant|employment_agency)$"),), "",
+             "companies like yours", "office",
+             "It handles shifts with grace time for late arrivals, and leave is applied for and approved from the phone.", "office or site"),
     Category("security", "Security agencies", "security agency",
              (("security services", ""),),
              (("office", "^security$"),), r"secur|guard|detective|facility management",
@@ -81,11 +92,21 @@ CATEGORIES: list[Category] = [
 ]
 
 BY_KEY = {c.key: c for c in CATEGORIES}
-DEFAULT = "hotels"
+DEFAULT = "hotels"   # what leads saved before categories existed are
+ALL = "all"          # a scan of every category
 
 
 def get(key: str | None) -> Category:
     return BY_KEY.get((key or DEFAULT).lower(), BY_KEY[DEFAULT])
+
+
+def resolve(key: str | None) -> list[Category]:
+    """A scan's categories: every one for "all" (and for scans that don't say), else that one."""
+    return CATEGORIES if not key or key == ALL else [get(key)]
+
+
+def label_of(key: str | None) -> str:
+    return "all businesses" if not key or key == ALL else get(key).label.lower()
 
 
 def find(text: str) -> Category | None:
