@@ -101,3 +101,10 @@ export const getEmails = () => call<EmailsView>("/settings/emails");
 export const saveEmails = (patch: Partial<EmailSettings>) => call<EmailsView>("/settings/emails", patch);
 export const previewEmails = (body: Partial<EmailSettings> & { category: string; name: string; area: string }) =>
   call<EmailPreview>("/settings/emails/preview", body);
+
+export type DncEntry = { key: string; kind: "email" | "phone"; reason: string; business: string; area: string; createdAt: string };
+export type BouncedLead = { id: string; name: string; email: string; area: string; city: string; category: string };
+export type DncView = { entries: DncEntry[]; bounced: BouncedLead[] };
+export const getDnc = () => call<DncView>("/settings/dnc");
+export const blockAddress = (address: string) => call<DncView>("/settings/dnc/block", { address });
+export const unblockAddress = (key: string) => call<DncView & { restored: number }>("/settings/dnc/unblock", { key });

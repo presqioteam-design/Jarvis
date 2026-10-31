@@ -509,16 +509,93 @@ def approve_all_with_email(city: str, area: str | None, category: str | None = N
 
 
 def block(lead_id: str) -> None:
-    """Never contact this hotel again (adds its email and phone to the do-not-contact list)."""
+    """Never contact this business again (adds its email and phone to the do-not-contact list)."""
     ref = col("leads").document(lead_id)
     lead = ref.get().to_dict() or {}
     keys = [*lead.get("emails", []), re.sub(r"\D", "", lead.get("phone", ""))]
     now = now_utc().isoformat()
     for k in filter(None, keys):
-        col("dnc").document(k.lower()).set({"reason": "blocked by admin", "createdAt": now})
+        col("dnc").document(k.lower()).set({"reason": "blocked by admin", "business": lead.get("name", ""), "createdAt": now})
     ref.update({"status": "unsubscribed", "updatedAt": now})
     recompute_area_of([lead_id])
     activity.log("status_change", f"Blocked {lead.get('name', lead_id)}: will never be contacted.", lead_id)
+
+
+# ── do-not-contact list (the Settings page) ──────────────────────────────────
+
+def _digits(phone: str) -> str:
+    return re.sub(r"\D", "", phone or "")
+
+
+def dnc_view() -> dict:
+    """Every blocked address with the business it belongs to, and the businesses whose email bounced."""
+    owners, bounced = {}, []
+    for d in col("leads").where(filter=FieldFilter("status", "in", ["unsubscribed", "bounced"])).select(
+            ["name", "emails", "phone", "status", "emailedTo", "area", "city", "category"]).stream():
+        l = d.to_dict()
+        for key in [*l.get("emails", []), _digits(l.get("phone", ""))]:
+            if key:
+                owners.setdefault(key.lower(), l)
+        if l["status"] == "bounced":
+            bounced.append({"id": d.id, "name": l.get("name", ""), "email": l.get("emailedTo", ""), "area": l.get("area", ""),
+                            "city": l.get("city", ""), "category": l.get("category") or categories.DEFAULT})
+    entries = []
+    for d in col("dnc").stream():
+        x, owner = d.to_dict(), owners.get(d.id, {})
+        entries.append({"key": d.id, "kind": "email" if "@" in d.id else "phone", "reason": x.get("reason", ""),
+                        "business": x.get("business") or owner.get("name", ""), "area": owner.get("area", ""),
+                        "createdAt": x.get("createdAt", "")})
+    entries.sort(key=lambda e: e["createdAt"], reverse=True)
+    return {"entries": entries, "bounced": sorted(bounced, key=lambda b: b["name"].lower())}
+
+
+EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", re.I)
+
+
+def _owners_of(key: str) -> list:
+    if "@" in key:
+        return list(col("leads").where(filter=FieldFilter("emails", "array_contains", key)).stream())
+    # phones are stored as +91XXXXXXXXXX; the list keeps digits only
+    return list(col("leads").where(filter=FieldFilter("phone", "==", f"+{key}")).stream())
+
+
+def block_address(address: str) -> str:
+    """Add an email by hand (e.g. someone who asked by phone not to be emailed)."""
+    key = address.strip().lower()
+    if not EMAIL_RE.fullmatch(key):
+        raise ValueError("Enter an email address, like info@hotel.com.")
+    owners = _owners_of(key)
+    now = now_utc().isoformat()
+    col("dnc").document(key).set({"reason": "added by admin", "business": owners[0].to_dict().get("name", "") if owners else "",
+                                 "createdAt": now})
+    for d in owners:
+        d.reference.update({"status": "unsubscribed", "nextActionAt": None, "updatedAt": now})
+    if owners:
+        recompute_area_of([d.id for d in owners])
+    activity.log("status_change", f"Added {key} to the do-not-contact list.")
+    return key
+
+
+def unblock(key: str) -> int:
+    """Take an address off the list. Its business can be emailed again; one already emailed
+    stays emailed, without new follow-ups. Returns how many businesses were restored."""
+    ref = col("dnc").document(key)
+    if not ref.get().exists:
+        raise ValueError("That address isn't on the list.")
+    ref.delete()
+    now, restored = now_utc().isoformat(), []
+    for d in _owners_of(key):
+        l = d.to_dict()
+        # its other address (email or phone) may still be blocked
+        others = [k for k in [*l.get("emails", []), _digits(l.get("phone", ""))] if k and k.lower() != key]
+        if l.get("status") != "unsubscribed" or any(col("dnc").document(k.lower()).get().exists for k in others):
+            continue
+        d.reference.update({"status": "emailed" if l.get("emailedTo") else "new", "nextActionAt": None, "updatedAt": now})
+        restored.append(d.id)
+    if restored:
+        recompute_area_of(restored)
+    activity.log("status_change", f"Removed {key} from the do-not-contact list.")
+    return len(restored)
 
 
 def interrupted() -> list[str]:

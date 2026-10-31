@@ -168,7 +168,7 @@ async def replied(lead: dict, m: dict) -> None:
     # a reply stops the follow-ups; unsubscribe also blocks the address for good
     col("leads").document(lead["id"]).update({"status": STATUS_FOR[kind], "nextActionAt": None, "updatedAt": now})
     if kind == "unsubscribe":
-        col("dnc").document(m["from"]).set({"reason": "asked to stop", "createdAt": now})
+        col("dnc").document(m["from"]).set({"reason": "asked to stop", "business": lead.get("name", ""), "createdAt": now})
 
     icon = {"interested": "🔥", "question": "❓", "not_now": "👋", "unsubscribe": "🚫", "other": "✉️"}[kind]
     label = {"interested": "is interested", "question": "has a question", "not_now": "said not now",

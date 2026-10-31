@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from ..deps import require_user
 from ..config import get_settings
-from ..services import categories, explore, outreach, prefs, templates
+from ..services import categories, explore, leads, outreach, prefs, templates
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_user)])
 
@@ -161,3 +161,36 @@ def preview(body: PreviewIn):
                              me["phone"], me["website"])
         out.append({"label": when, "subject": e.subject, "body": e.body})
     return {"emails": out, "from": f"{me['senderName']} <{get_settings().email_address}>"}
+
+
+# ── do-not-contact list ──────────────────────────────────────────────────────
+
+@router.get("/dnc")
+def get_dnc():
+    return leads.dnc_view()
+
+
+class AddressIn(BaseModel):
+    address: str = Field(min_length=3, max_length=200)
+
+
+@router.post("/dnc/block")
+def block(body: AddressIn):
+    try:
+        leads.block_address(body.address)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return leads.dnc_view()
+
+
+class KeyIn(BaseModel):
+    key: str = Field(min_length=3, max_length=200)
+
+
+@router.post("/dnc/unblock")
+def unblock(body: KeyIn):
+    try:
+        restored = leads.unblock(body.key.strip().lower())
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return {"restored": restored, **leads.dnc_view()}

@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  errorText, getEmails, getFinding, getSending, previewEmails, prioritiseCity, saveEmails, saveFinding, saveSending, skipCity,
-  type EmailPreview, type EmailSettings, type EmailsView, type FindingSettings, type FindingView, type SendingSettings, type SendingView,
+  blockAddress, errorText, getDnc, getEmails, getFinding, getSending, previewEmails, prioritiseCity, saveEmails, saveFinding,
+  saveSending, skipCity, unblockAddress,
+  type DncView, type EmailPreview, type EmailSettings, type EmailsView, type FindingSettings, type FindingView,
+  type SendingSettings, type SendingView,
 } from "../lib/api";
+import { categoryLabel } from "@jarvis/shared";
+import { timeAgo } from "../lib/format";
 import Icon from "../components/Icon";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -39,6 +43,7 @@ export default function Settings() {
       <SendingSection />
       <FindingSection />
       <EmailsSection />
+      <DncSection />
     </div>
   );
 }
@@ -558,6 +563,164 @@ function EmailsSection() {
         )}
         <p className="muted small">Follow-ups go as replies in the same email thread, so the business sees them together.</p>
       </div>
+    </section>
+  );
+}
+
+// ── section 4: do-not-contact list ─────────────────────────────────────────
+
+let lastDnc: DncView | null = null;
+
+const REASON: Record<string, string> = {
+  "asked to stop": "Asked us to stop",
+  "blocked by admin": "Blocked by you",
+  "added by admin": "Added by you",
+};
+
+/** "919876543210" -> "+91 98765 43210" (the list keeps phone numbers as digits) */
+const showKey = (key: string, kind: string) =>
+  kind === "phone" && /^91\d{10}$/.test(key) ? `+91 ${key.slice(2, 7)} ${key.slice(7)}` : key;
+
+function DncSection() {
+  const [view, setViewState] = useState<DncView | null>(lastDnc);
+  const [tab, setTab] = useState<"blocked" | "bounced">("blocked");
+  const [search, setSearch] = useState("");
+  const [address, setAddress] = useState("");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const setView = (v: DncView) => {
+    lastDnc = v;
+    setViewState(v);
+  };
+
+  useEffect(() => {
+    getDnc()
+      .then(setView)
+      .catch((e) => !lastDnc && setError(errorText(e, "Couldn't load the list. The server may be waking up; try again in a minute.")));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const q = search.trim().toLowerCase();
+  const entries = useMemo(
+    () => (view?.entries ?? []).filter((e) => !q || `${e.key} ${e.business} ${e.area}`.toLowerCase().includes(q)),
+    [view, q],
+  );
+  const bounced = useMemo(
+    () => (view?.bounced ?? []).filter((b) => !q || `${b.name} ${b.email} ${b.area}`.toLowerCase().includes(q)),
+    [view, q],
+  );
+
+  async function add(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy("add");
+    setError("");
+    setNote("");
+    try {
+      setView(await blockAddress(address.trim()));
+      setNote(`${address.trim().toLowerCase()} won't be emailed.`);
+      setAddress("");
+    } catch (err) {
+      setError(errorText(err, "Couldn't add it. Check your connection and try again."));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function unblock(key: string, reason: string) {
+    const ask = reason === "asked to stop"
+      ? `${key} asked us to stop emailing. Emailing them again could get the Gmail account reported as spam. Unblock anyway?`
+      : `Take ${key} off the list? Jarvis may email this business again.`;
+    if (!confirm(ask)) return;
+    setBusy(key);
+    setError("");
+    setNote("");
+    try {
+      const v = await unblockAddress(key);
+      setView(v);
+      setNote(v.restored ? `${key} is off the list; its business can be emailed again.` : `${key} is off the list.`);
+    } catch (err) {
+      setError(errorText(err, "Couldn't unblock it. Try again."));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <section className="card settings-card" aria-labelledby="dnc-title">
+      <div>
+        <h2 id="dnc-title">Do-not-contact list</h2>
+        <p className="muted small">
+          Jarvis never emails these addresses. Businesses get here when they reply “stop”, when you block them in Leads
+          or on Telegram, or when you add an address below.
+        </p>
+      </div>
+
+      <form className="add-city" onSubmit={add}>
+        <input className="input" type="email" placeholder="Add an email, e.g. someone who asked on the phone" value={address}
+          onChange={(e) => setAddress(e.target.value)} aria-label="Email to block" />
+        <button className="btn" type="submit" disabled={!address.trim() || !!busy}>{busy === "add" ? "Adding…" : "Don't email"}</button>
+      </form>
+      {note && <p className="saved-note">{note}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
+
+      {!view ? (
+        <p className="muted"><span className="spinner" /> Loading…</p>
+      ) : (
+        <>
+          <div className="dnc-bar">
+            <div className="segmented" role="tablist" aria-label="Which list">
+              <button type="button" role="tab" aria-selected={tab === "blocked"} className={tab === "blocked" ? "active" : ""} onClick={() => setTab("blocked")}>
+                Blocked ({view.entries.length})
+              </button>
+              <button type="button" role="tab" aria-selected={tab === "bounced"} className={tab === "bounced" ? "active" : ""} onClick={() => setTab("bounced")}>
+                Bounced ({view.bounced.length})
+              </button>
+            </div>
+            <input className="input dnc-search" type="search" placeholder="Search address or business…" value={search}
+              onChange={(e) => setSearch(e.target.value)} aria-label="Search the list" />
+          </div>
+
+          {tab === "blocked" ? (
+            entries.length === 0 ? (
+              <p className="empty">{q ? "Nothing matches." : "Nobody is blocked. Replies asking to stop are added here automatically."}</p>
+            ) : (
+              <ul className="dnc-list">
+                {entries.map((e) => (
+                  <li key={e.key}>
+                    <div className="q-main">
+                      <div className="q-name">{showKey(e.key, e.kind)}<span className="cat-tag muted-tag">{e.kind === "email" ? "Email" : "Phone"}</span></div>
+                      <div className="muted small">
+                        {[e.business, e.area].filter(Boolean).join(" · ") || "No business on file"} · {REASON[e.reason] ?? e.reason}
+                        {e.createdAt && ` · ${timeAgo(e.createdAt)}`}
+                      </div>
+                    </div>
+                    <button className="btn small-btn" disabled={!!busy} onClick={() => unblock(e.key, e.reason)}>
+                      {busy === e.key ? "Removing…" : "Unblock"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : bounced.length === 0 ? (
+            <p className="empty">{q ? "Nothing matches." : "No bounced emails."}</p>
+          ) : (
+            <>
+              <p className="muted small">These addresses don't exist (the email came back). Jarvis doesn't email them again.</p>
+              <ul className="dnc-list">
+                {bounced.map((b) => (
+                  <li key={b.id}>
+                    <div className="q-main">
+                      <div className="q-name">{b.name}<span className="cat-tag">{categoryLabel(b.category)}</span></div>
+                      <div className="muted small">{b.email}{b.area && ` · ${b.area}`}{b.city && `, ${b.city}`}</div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </>
+      )}
     </section>
   );
 }

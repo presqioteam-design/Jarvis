@@ -422,6 +422,13 @@ td.strong { color: var(--c-customer); font-weight: 600; }
 .email-preview dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .email-body { padding: 18px; white-space: pre-wrap; font: 14px/1.6 Arial, Helvetica, sans-serif; max-height: 460px; overflow-y: auto; overflow-wrap: anywhere; }
 
+.dnc-bar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.dnc-search { flex: 1; min-width: 200px; height: 42px; }
+.dnc-list { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 14px; }
+.dnc-list li { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.dnc-list li:last-child { border-bottom: 0; }
+.dnc-list .q-name { overflow-wrap: anywhere; flex-wrap: wrap; }
+
 /* ── ongoing call banner (shown on other pages while a call runs) ─────────── */
 .call-banner { position: fixed; right: 24px; bottom: 24px; z-index: 30; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 10px;
   border-radius: 999px; background: rgba(3,11,21,.94); border: 1px solid rgba(79,216,255,.45); color: #dff7ff;
