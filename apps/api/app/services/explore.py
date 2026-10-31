@@ -26,7 +26,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from ..config import get_settings
 from ..firebase import col, db
 from ..timeutil import now_local, now_utc
-from . import activity, categories, keepalive, leads, prefs, sources, telegram
+from . import activity, categories, keepalive, leads, prefs, sources, telegram, usage
 
 log = logging.getLogger(__name__)
 OVERPASS = ["https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass-api.de/api/interpreter",
@@ -223,6 +223,7 @@ async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
     for h in await sources.osm_places(box, [categories.get(k) for k in cats]):
         found.setdefault(h["id"], h)
 
+    usage.save_map_searches()
     rows = await leads.save_reachable(list(found.values()), "explore", city, area["name"])
     add_to_city(city, rows)
     by_cat = dict(Counter(r["category"] for r in rows))

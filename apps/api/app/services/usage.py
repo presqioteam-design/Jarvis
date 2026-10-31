@@ -8,7 +8,7 @@ from google.cloud.firestore_v1 import Increment
 
 from ..config import get_settings
 from ..firebase import col
-from ..timeutil import now_local
+from ..timeutil import now_local, now_utc
 
 LABELS = {"voiceCalls": "voice calls", "ai": "AI requests", "tts": "spoken replies"}
 
@@ -46,3 +46,33 @@ def take(kind: str) -> int:
 def summary() -> str:
     used = today()
     return " · ".join(f"{LABELS[k]} {used[k]}/{limit(k)}" for k in LABELS)
+
+
+# ── map searches (TomTom) ────────────────────────────────────────────────────
+# TomTom's free plan allows about 2,500 searches a day, counted by UTC date (it resets at
+# 5:30 AM IST). Searches are counted in memory and written in batches, not one write each.
+
+MAP_SEARCHES_PER_DAY = 2500
+_unsaved_maps = 0
+
+
+def _maps_doc():
+    return col("usage").document(f"maps-{now_utc().date().isoformat()}")
+
+
+def count_map_searches(n: int) -> None:
+    global _unsaved_maps
+    _unsaved_maps += n
+
+
+def save_map_searches() -> None:
+    """Write the searches counted since the last save (call at checkpoints)."""
+    global _unsaved_maps
+    n, _unsaved_maps = _unsaved_maps, 0
+    if n:
+        _maps_doc().set({"searches": Increment(n)}, merge=True)
+
+
+def map_searches_today() -> int:
+    snap = _maps_doc().get()
+    return int((snap.to_dict() or {}).get("searches", 0)) + _unsaved_maps

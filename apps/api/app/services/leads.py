@@ -21,7 +21,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 from ..firebase import col, db
 from ..timeutil import now_utc
-from . import activity, categories, crawler, keepalive, prefs, sources, telegram
+from . import activity, categories, crawler, keepalive, prefs, sources, telegram, usage
 
 log = logging.getLogger(__name__)
 SAME_PLACE_M = 200      # two results this close with similar names are one hotel
@@ -218,6 +218,7 @@ async def scan_squares(ref, scan: dict, campaign_id: str, city: str, cats: list[
 
     async def checkpoint():
         nonlocal pending
+        usage.save_map_searches()
         # save what these squares found before recording progress, so a resume doesn't lose it
         scan["found"] += len(await save_reachable(pending, campaign_id, city))
         pending = []

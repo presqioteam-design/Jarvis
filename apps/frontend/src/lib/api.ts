@@ -108,3 +108,11 @@ export type DncView = { entries: DncEntry[]; bounced: BouncedLead[] };
 export const getDnc = () => call<DncView>("/settings/dnc");
 export const blockAddress = (address: string) => call<DncView>("/settings/dnc/block", { address });
 export const unblockAddress = (key: string) => call<DncView & { restored: number }>("/settings/dnc/unblock", { key });
+
+export type UsageMeter = { key: string; label: string; used: number; limit: number; resetsAt: string; note: string };
+export type DatabaseUsage =
+  | { reads: number; writes: number; deletes: number; limits: { reads: number; writes: number; deletes: number }; resetsAt: string; error?: undefined }
+  | { error: "permission"; serviceAccount: string; project: string; resetsAt: string }
+  | { error: "unavailable"; resetsAt: string };
+export type UsageView = { meters: UsageMeter[]; database: DatabaseUsage };
+export const getUsage = () => call<UsageView>("/settings/usage");

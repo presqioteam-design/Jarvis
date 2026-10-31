@@ -4,13 +4,15 @@ Plain `def` endpoints: FastAPI runs them in a worker thread, so a busy moment el
 (a sending batch or a scan doing database work) can't keep the page waiting."""
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, time as dtime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..deps import require_user
 from ..config import get_settings
-from ..services import categories, explore, leads, outreach, prefs, templates
+from ..timeutil import now_local, now_utc
+from ..services import categories, dbusage, explore, leads, outreach, prefs, templates, usage
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_user)])
 
@@ -194,3 +196,29 @@ def unblock(body: KeyIn):
     except ValueError as e:
         raise HTTPException(404, str(e))
     return {"restored": restored, **leads.dnc_view()}
+
+
+# ── usage today ──────────────────────────────────────────────────────────────
+
+@router.get("/usage")
+def get_usage():
+    tz = get_settings().tz
+    midnight_ist = datetime.combine(now_local().date() + timedelta(days=1), dtime.min, tzinfo=tz).isoformat()
+    midnight_utc = datetime.combine(now_utc().date() + timedelta(days=1), dtime.min, tzinfo=timezone.utc).isoformat()
+    sent_f, ai_f, maps_f, db_f, cfg_f = (_pool.submit(outreach.sent_today), _pool.submit(usage.today),
+                                         _pool.submit(usage.map_searches_today), _pool.submit(dbusage.today),
+                                         _pool.submit(prefs.sending))
+    ai = ai_f.result()
+    meters = [
+        {"key": "emails", "label": "Emails sent", "used": sent_f.result(), "limit": cfg_f.result()["dailyCap"], "resetsAt": midnight_ist,
+         "note": "Your daily limit (Settings → Automatic sending)."},
+        {"key": "ai", "label": "AI requests", "used": ai["ai"], "limit": usage.limit("ai"), "resetsAt": midnight_ist,
+         "note": "Chat, sorting replies, voice notes. Kept well under Gemini's free allowance."},
+        {"key": "voiceCalls", "label": "Voice calls", "used": ai["voiceCalls"], "limit": usage.limit("voiceCalls"), "resetsAt": midnight_ist,
+         "note": "Talk to Jarvis."},
+        {"key": "tts", "label": "Spoken replies", "used": ai["tts"], "limit": usage.limit("tts"), "resetsAt": midnight_ist,
+         "note": "The voice note in the daily report."},
+        {"key": "maps", "label": "Map searches", "used": maps_f.result(), "limit": usage.MAP_SEARCHES_PER_DAY, "resetsAt": midnight_utc,
+         "note": "TomTom's free daily searches, used by scans and the night explorer."},
+    ]
+    return {"meters": meters, "database": db_f.result()}

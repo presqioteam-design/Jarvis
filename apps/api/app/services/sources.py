@@ -10,7 +10,7 @@ import re
 import httpx
 
 from ..config import get_settings
-from . import categories
+from . import categories, usage
 from .categories import Category
 
 log = logging.getLogger(__name__)
@@ -59,6 +59,7 @@ async def tomtom_box(client: httpx.AsyncClient, box: dict, cat: Category) -> tup
             r = await client.get(f"{TOMTOM}/categorySearch/{word}.json", params={**params, "categorySet": ids})
         else:   # no TomTom category for it: search by name inside the box
             r = await client.get(f"{TOMTOM}/poiSearch/{word}.json", params=params)
+        usage.count_map_searches(1)
         r.raise_for_status()
         results = r.json().get("results", [])
         full = full or len(results) >= 100

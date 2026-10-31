@@ -429,6 +429,22 @@ td.strong { color: var(--c-customer); font-weight: 600; }
 .dnc-list li:last-child { border-bottom: 0; }
 .dnc-list .q-name { overflow-wrap: anywhere; flex-wrap: wrap; }
 
+.meters { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.meter { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 14px; background: var(--panel-2); }
+.meter-top { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; }
+.meter-num { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+.meter-num strong { color: var(--text); font-size: 16px; }
+.meter-bar { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.meter-bar span { display: block; height: 100%; border-radius: 4px; background: var(--c-customer); transition: width .3s; }
+.meter.warn .meter-bar span { background: var(--c-interested); }
+.meter.bad .meter-bar span { background: var(--danger); }
+.meter-note { line-height: 1.4; }
+.setup-steps { padding: 14px 16px; border-radius: 14px; background: var(--panel-2); font-size: 14px; line-height: 1.55; }
+.setup-steps p { margin: 0 0 8px; }
+.setup-steps ol { margin: 0 0 8px; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.setup-steps a { color: var(--accent); }
+.copy { user-select: all; overflow-wrap: anywhere; }
+
 /* ── ongoing call banner (shown on other pages while a call runs) ─────────── */
 .call-banner { position: fixed; right: 24px; bottom: 24px; z-index: 30; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 10px;
   border-radius: 999px; background: rgba(3,11,21,.94); border: 1px solid rgba(79,216,255,.45); color: #dff7ff;

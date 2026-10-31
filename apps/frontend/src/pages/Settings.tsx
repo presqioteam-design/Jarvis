@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  blockAddress, errorText, getDnc, getEmails, getFinding, getSending, previewEmails, prioritiseCity, saveEmails, saveFinding,
+  blockAddress, errorText, getDnc, getUsage, getEmails, getFinding, getSending, previewEmails, prioritiseCity, saveEmails, saveFinding,
   saveSending, skipCity, unblockAddress,
-  type DncView, type EmailPreview, type EmailSettings, type EmailsView, type FindingSettings, type FindingView,
+  type DncView, type UsageView, type EmailPreview, type EmailSettings, type EmailsView, type FindingSettings, type FindingView,
   type SendingSettings, type SendingView,
 } from "../lib/api";
 import { categoryLabel } from "@jarvis/shared";
@@ -40,6 +40,7 @@ export default function Settings() {
           <p className="muted sub">Changes apply from Jarvis's next run, within 30 minutes. No redeploy needed.</p>
         </div>
       </header>
+      <UsageSection />
       <SendingSection />
       <FindingSection />
       <EmailsSection />
@@ -719,6 +720,109 @@ function DncSection() {
               </ul>
             </>
           )}
+        </>
+      )}
+    </section>
+  );
+}
+
+// ── usage today ────────────────────────────────────────────────────────────
+
+let lastUsage: UsageView | null = null;
+
+/** "in 5 h (12:00 AM)" */
+function resetsIn(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  const at = new Date(iso).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true });
+  if (ms <= 0) return "now";
+  const h = Math.floor(ms / 3600_000);
+  const m = Math.round((ms % 3600_000) / 60_000);
+  return `in ${h ? `${h} h ` : ""}${h < 3 ? `${m} min ` : ""}(${at})`.replace("  ", " ");
+}
+
+function Meter({ label, used, limit, resetsAt, note }: { label: string; used: number; limit: number; resetsAt: string; note?: string }) {
+  const pct = limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  const tone = pct >= 90 ? "bad" : pct >= 70 ? "warn" : "ok";
+  return (
+    <div className={`meter ${tone}`}>
+      <div className="meter-top">
+        <span>{label}</span>
+        <span className="meter-num"><strong>{used.toLocaleString()}</strong> / {limit.toLocaleString()}</span>
+      </div>
+      <div className="meter-bar" role="progressbar" aria-label={label} aria-valuenow={used} aria-valuemin={0} aria-valuemax={limit}>
+        <span style={{ width: `${pct}%` }} />
+      </div>
+      <div className="muted small">{pct >= 100 ? "Used up" : `${(limit - used).toLocaleString()} left`} · resets {resetsIn(resetsAt)}</div>
+      {note && <div className="muted small meter-note">{note}</div>}
+    </div>
+  );
+}
+
+function UsageSection() {
+  const [view, setViewState] = useState<UsageView | null>(lastUsage);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    getUsage()
+      .then((v) => {
+        lastUsage = v;
+        setViewState(v);
+        setError("");
+      })
+      .catch((e) => !lastUsage && setError(errorText(e, "Couldn't load usage. The server may be waking up; try again in a minute.")))
+      .finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const db = view?.database;
+  return (
+    <section className="card settings-card" aria-labelledby="usage-title">
+      <div className="settings-head">
+        <div>
+          <h2 id="usage-title">Usage today</h2>
+          <p className="muted small">What's used of each daily allowance. When one runs out, that part of Jarvis waits until it resets.</p>
+        </div>
+        <button type="button" className="btn small-btn" onClick={load} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
+      </div>
+      {error && <p className="error" role="alert">{error}</p>}
+      {!view ? (
+        !error && <p className="muted"><span className="spinner" /> Loading…</p>
+      ) : (
+        <>
+          <div className="meters">
+            {view.meters.map(({ key, ...m }) => <Meter key={key} {...m} />)}
+          </div>
+          <div className="settings-sub">
+            <h3>Database (Firestore's free allowance)</h3>
+            {db && !db.error ? (
+              <div className="meters">
+                <Meter label="Reads" used={db.reads} limit={db.limits.reads} resetsAt={db.resetsAt} />
+                <Meter label="Writes" used={db.writes} limit={db.limits.writes} resetsAt={db.resetsAt} />
+                <Meter label="Deletes" used={db.deletes} limit={db.limits.deletes} resetsAt={db.resetsAt} />
+              </div>
+            ) : db?.error === "permission" ? (
+              <div className="setup-steps">
+                <p>Jarvis needs permission to read these numbers from Google Cloud (a one-time step):</p>
+                <ol>
+                  <li>
+                    Open{" "}
+                    <a href={`https://console.cloud.google.com/iam-admin/iam?project=${db.project}`} target="_blank" rel="noreferrer">
+                      Google Cloud → IAM for {db.project}
+                    </a>{" "}
+                    (sign in with the Google account that owns the Firebase project).
+                  </li>
+                  <li>Click <strong>Grant access</strong>. In “New principals” paste: <code className="copy">{db.serviceAccount}</code></li>
+                  <li>In “Role” pick <strong>Monitoring Viewer</strong>, then <strong>Save</strong>.</li>
+                  <li>Wait a minute and press Refresh above.</li>
+                </ol>
+                <p className="muted small">It only lets Jarvis read usage numbers. Until then, Firebase console → Firestore → Usage shows them.</p>
+              </div>
+            ) : (
+              <p className="muted small">The numbers aren't available right now. Firebase console → Firestore → Usage shows them. Resets {db ? resetsIn(db.resetsAt) : ""}.</p>
+            )}
+          </div>
         </>
       )}
     </section>
