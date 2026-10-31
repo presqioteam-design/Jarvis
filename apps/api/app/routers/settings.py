@@ -222,3 +222,36 @@ def get_usage():
          "note": "TomTom's free daily searches, used by scans and the night explorer."},
     ]
     return {"meters": meters, "database": db_f.result()}
+
+
+# ── voice and AI limits ──────────────────────────────────────────────────────
+
+def _ai_view() -> dict:
+    limits_f, used_f = _pool.submit(prefs.ai_limits), _pool.submit(usage.today)
+    used = used_f.result()
+    return {
+        "settings": limits_f.result(),
+        "bounds": {k: {"min": lo, "max": hi} for k, (lo, hi) in prefs.AI_BOUNDS.items()},
+        "usedToday": {"voiceCallsPerDay": used["voiceCalls"], "aiPerDay": used["ai"], "ttsPerDay": used["tts"]},
+    }
+
+
+@router.get("/ai")
+def get_ai():
+    return _ai_view()
+
+
+class AiIn(BaseModel):
+    voiceCallsPerDay: int | None = None
+    minutesPerCall: int | None = None
+    aiPerDay: int | None = None
+    ttsPerDay: int | None = None
+
+
+@router.post("/ai")
+def save_ai(body: AiIn):
+    try:
+        prefs.save_ai_limits(body.model_dump())
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return _ai_view()

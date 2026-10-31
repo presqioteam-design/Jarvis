@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from ..config import get_settings
 from ..deps import require_user
-from ..services import chat, presqio, usage
+from ..services import chat, prefs, presqio, usage
 from ..timeutil import now_local
 
 router = APIRouter(prefix="/voice", tags=["voice"], dependencies=[Depends(require_user)])
@@ -143,8 +143,9 @@ async def session():
         raise HTTPException(429, str(e))   # the unused token simply expires
     if r.status_code != 200:
         raise HTTPException(502, "Couldn't start a voice session with Gemini. Try again in a minute.")
-    return {"url": f"{WS_URL}?access_token={r.json()['name']}", "maxSeconds": s.voice_minutes_per_call * 60,
-            "callsLeft": left, "callsPerDay": s.voice_calls_per_day}
+    lim = prefs.ai_limits()
+    return {"url": f"{WS_URL}?access_token={r.json()['name']}", "maxSeconds": lim["minutesPerCall"] * 60,
+            "callsLeft": left, "callsPerDay": lim["voiceCallsPerDay"]}
 
 
 class CommandIn(BaseModel):

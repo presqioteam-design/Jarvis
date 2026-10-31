@@ -424,6 +424,9 @@ td.strong { color: var(--c-customer); font-weight: 600; }
 .q-actions { display: flex; gap: 6px; flex: none; }
 .muted-tag { background: var(--panel-2); color: var(--muted); }
 
+.settings-grid.ai-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.input-unit { display: flex; align-items: center; gap: 10px; }
+.input-unit .input { max-width: 140px; }
 .preview-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .preview-controls .field label { font-size: 13px; font-weight: 600; color: var(--text); }
 .email-preview { border: 1px solid var(--border-strong); border-radius: 14px; background: #f7f8fa; color: #1f2328; overflow: hidden; }
@@ -526,7 +529,7 @@ td.strong { color: var(--c-customer); font-weight: 600; }
   .settings-actions .btn { flex: 1; }
   .kind-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
   .preview-controls { grid-template-columns: 1fr; }
-  .settings-grid.stack-on-phone { grid-template-columns: 1fr; }
+  .settings-grid.stack-on-phone, .settings-grid.ai-grid { grid-template-columns: 1fr; }
   .email-tabs button { white-space: nowrap; padding: 0 10px; font-size: 13px; flex: 1; }
   .kind { padding: 8px 10px; gap: 8px; font-size: 13px; line-height: 1.3; }
   .city-queue li { flex-wrap: wrap; }

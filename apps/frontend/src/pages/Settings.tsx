@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  blockAddress, errorText, getDnc, getUsage, getEmails, getFinding, getSending, previewEmails, prioritiseCity, saveEmails, saveFinding,
+  blockAddress, errorText, getAiLimits, getDnc, getUsage, saveAiLimits, getEmails, getFinding, getSending, previewEmails, prioritiseCity, saveEmails, saveFinding,
   saveSending, skipCity, unblockAddress,
-  type DncView, type UsageView, type EmailPreview, type EmailSettings, type EmailsView, type FindingSettings, type FindingView,
+  type AiLimits, type AiView, type DncView, type UsageView, type EmailPreview, type EmailSettings, type EmailsView, type FindingSettings, type FindingView,
   type SendingSettings, type SendingView,
 } from "../lib/api";
 import { categoryLabel } from "@jarvis/shared";
@@ -39,6 +39,7 @@ const SECTIONS: { key: string; label: string; icon: IconName; Body: () => React.
   { key: "finding", label: "What to find", icon: "search", Body: FindingSection },
   { key: "emails", label: "Emails", icon: "chat", Body: EmailsSection },
   { key: "dnc", label: "Do not contact", icon: "ban", Body: DncSection },
+  { key: "ai", label: "Voice & AI", icon: "mic", Body: AiSection },
 ];
 
 export default function Settings() {
@@ -851,6 +852,105 @@ function UsageSection() {
           </div>
         </>
       )}
+    </section>
+  );
+}
+
+// ── voice and AI limits ────────────────────────────────────────────────────
+
+let lastAi: AiView | null = null;
+
+const AI_FIELDS: { key: keyof AiLimits; label: string; unit: string; note: string }[] = [
+  { key: "voiceCallsPerDay", label: "Voice calls a day", unit: "calls", note: "Talk to Jarvis. Each call is one Gemini Live session." },
+  { key: "minutesPerCall", label: "Minutes per call", unit: "min", note: "Jarvis warns a minute before the end. Gemini Live calls can't run past 15 minutes." },
+  { key: "aiPerDay", label: "AI requests a day", unit: "requests", note: "Chat and Telegram answers, sorting replies, transcribing your voice notes." },
+  { key: "ttsPerDay", label: "Spoken replies a day", unit: "replies", note: "The voice note with the 7 PM report. 0 turns voice notes off (the written report still comes)." },
+];
+
+function AiSection() {
+  const [view, setViewState] = useState<AiView | null>(lastAi);
+  const [form, setForm] = useState<AiLimits | null>(lastAi?.settings ?? null);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+  const setView = (v: AiView) => {
+    lastAi = v;
+    setViewState(v);
+  };
+
+  useEffect(() => {
+    const before = lastAi;
+    getAiLimits()
+      .then((v) => {
+        setView(v);
+        setForm((f) => (!f || !before || JSON.stringify(f) === JSON.stringify(before.settings) ? v.settings : f));
+      })
+      .catch((e) => !before && setError(errorText(e, "Couldn't load these settings. The server may be waking up; try again in a minute.")));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const changed = useMemo(() => !!form && !!view && JSON.stringify(form) !== JSON.stringify(view.settings), [form, view]);
+
+  if (!form || !view) {
+    return (
+      <section className="card settings-card">
+        <h2>Voice &amp; AI limits</h2>
+        {error ? <p className="error" role="alert">{error}</p> : <p className="muted"><span className="spinner" /> Loading…</p>}
+      </section>
+    );
+  }
+
+  const outOfRange = AI_FIELDS.some(({ key }) => form[key] < view.bounds[key].min || form[key] > view.bounds[key].max);
+
+  async function save() {
+    setBusy(true);
+    setError("");
+    try {
+      const v = await saveAiLimits(form!);
+      setView(v);
+      setForm(v.settings);
+      setSaved(true);
+    } catch (e) {
+      setError(errorText(e, "Couldn't save. Check your connection and try again."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card settings-card" aria-labelledby="ai-title">
+      <div>
+        <h2 id="ai-title">Voice &amp; AI limits</h2>
+        <p className="muted small">
+          Daily caps on Gemini, so Jarvis never runs past the free allowance. When one is reached, that feature says
+          so and works again after midnight.
+        </p>
+      </div>
+      <div className="settings-grid ai-grid">
+        {AI_FIELDS.map(({ key, label, unit, note }) => {
+          const b = view.bounds[key];
+          const used = key === "minutesPerCall" ? null : view.usedToday[key as keyof AiView["usedToday"]];
+          return (
+            <div className="field" key={key}>
+              <label htmlFor={`ai-${key}`}>{label}</label>
+              <div className="input-unit">
+                <input id={`ai-${key}`} className="input" type="number" min={b.min} max={b.max} value={form[key]}
+                  onChange={(e) => { setSaved(false); setForm({ ...form, [key]: Number(e.target.value) }); }} />
+                <span className="muted">{unit}</span>
+              </div>
+              <span className="muted small">
+                {b.min}–{b.max}.{used !== null && <> Used today: <strong>{used}</strong>.</>} {note}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {error && <p className="error" role="alert">{error}</p>}
+      <div className="settings-actions">
+        {saved && !changed && <span className="saved"><Icon name="check" size={16} /> Saved</span>}
+        <button className="btn" type="button" disabled={!changed || busy} onClick={() => { setForm(view.settings); setError(""); }}>Undo changes</button>
+        <button className="btn primary" type="button" disabled={!changed || busy || outOfRange} onClick={save}>{busy ? "Saving…" : "Save"}</button>
+      </div>
     </section>
   );
 }

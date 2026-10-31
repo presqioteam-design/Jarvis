@@ -20,8 +20,9 @@ class LimitReached(Exception):
 
 
 def limit(kind: str) -> int:
-    s = get_settings()
-    return {"voiceCalls": s.voice_calls_per_day, "ai": s.ai_requests_per_day, "tts": s.tts_per_day}[kind]
+    from . import prefs   # prefs reads categories, which come after this module loads
+    a = prefs.ai_limits()
+    return {"voiceCalls": a["voiceCallsPerDay"], "ai": a["aiPerDay"], "tts": a["ttsPerDay"]}[kind]
 
 
 def _doc():

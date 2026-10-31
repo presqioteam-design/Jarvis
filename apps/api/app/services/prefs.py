@@ -5,6 +5,7 @@ so a change takes effect on the next cron run without a redeploy. One read per u
 """
 
 import re
+import time
 
 from ..config import get_settings
 from ..firebase import col
@@ -22,10 +23,33 @@ def ref():
     return col("settings").document("main")
 
 
+# The settings doc is read on every AI request and cron run: keep it for 30 s instead of
+# re-reading each time. Saving here clears it at once; changes made elsewhere show within 30 s.
+_cached: tuple[float, dict] | None = None
+
+
+def _doc() -> dict:
+    global _cached
+    if _cached and time.monotonic() - _cached[0] < 30:
+        return _cached[1]
+    _cached = (time.monotonic(), ref().get().to_dict() or {})
+    return _cached[1]
+
+
+def forget() -> None:
+    global _cached
+    _cached = None
+
+
+def _save(data: dict) -> None:
+    ref().set(data, merge=True)
+    forget()
+
+
 def sending() -> dict:
     """The sending settings in effect: saved values over Render's defaults."""
     s = get_settings()
-    doc = ref().get().to_dict() or {}
+    doc = _doc()
     saved = doc.get("sending") or {}
     return {
         "enabled": doc.get("autoSend", True),
@@ -75,7 +99,7 @@ def save_sending(patch: dict) -> dict:
         "from": cfg["from"], "until": cfg["until"], "days": days,
         "followUps": bool(cfg["followUps"]), "followUpDays": [f1, f2],
     }
-    ref().set({"sending": saved, **({"autoSend": bool(patch["enabled"])} if patch.get("enabled") is not None else {})}, merge=True)
+    _save({"sending": saved, **({"autoSend": bool(patch["enabled"])} if patch.get("enabled") is not None else {})})
     return sending()
 
 
@@ -85,7 +109,7 @@ MAX_AREAS_PER_NIGHT = 10   # ~160 TomTom searches an area at most; TomTom's free
 
 
 def finding() -> dict:
-    doc = ref().get().to_dict() or {}
+    doc = _doc()
     saved = doc.get("finding") or {}
     off = set(saved.get("off", []))
     return {
@@ -109,8 +133,8 @@ def save_finding(patch: dict) -> dict:
     areas = int(cfg["areasPerNight"])
     if not 1 <= areas <= MAX_AREAS_PER_NIGHT:
         raise ValueError(f"Areas a night must be 1 to {MAX_AREAS_PER_NIGHT} (the free map searches allow about that many).")
-    ref().set({"finding": {"off": [k for k in keys if k not in on], "areasPerNight": areas},
-               **({"exploreEnabled": bool(patch["exploreEnabled"])} if patch.get("exploreEnabled") is not None else {})}, merge=True)
+    _save({"finding": {"off": [k for k in keys if k not in on], "areasPerNight": areas},
+           **({"exploreEnabled": bool(patch["exploreEnabled"])} if patch.get("exploreEnabled") is not None else {})})
     return finding()
 
 
@@ -118,7 +142,7 @@ def save_finding(patch: dict) -> dict:
 
 def emails() -> dict:
     from . import presqio   # presqio reads these settings too
-    saved = (ref().get().to_dict() or {}).get("emails") or {}
+    saved = _doc().get("emails") or {}
     return {
         "senderName": saved.get("senderName", get_settings().sender_name),
         "phone": saved.get("phone", presqio.PHONE),
@@ -134,5 +158,31 @@ def save_emails(patch: dict) -> dict:
         raise ValueError("Enter a phone number like +91 63093 87321.")
     if not re.fullmatch(r"https?://[^\s/$.?#][^\s]*\.[^\s]{2,}", cfg["website"]):
         raise ValueError("Enter the website as a full address, like https://presqio.pages.dev.")
-    ref().set({"emails": cfg}, merge=True)
+    _save({"emails": cfg})
     return emails()
+
+
+# ── voice and AI limits ──────────────────────────────────────────────────────
+# Upper bounds stay inside Gemini's free allowance; a Live voice call can't run past 15 minutes.
+AI_BOUNDS = {"voiceCallsPerDay": (1, 30), "minutesPerCall": (1, 15), "aiPerDay": (50, 1500), "ttsPerDay": (0, 20)}
+
+
+def ai_limits() -> dict:
+    s, saved = get_settings(), _doc().get("ai") or {}
+    return {
+        "voiceCallsPerDay": saved.get("voiceCallsPerDay", s.voice_calls_per_day),
+        "minutesPerCall": saved.get("minutesPerCall", s.voice_minutes_per_call),
+        "aiPerDay": saved.get("aiPerDay", s.ai_requests_per_day),
+        "ttsPerDay": saved.get("ttsPerDay", s.tts_per_day),
+    }
+
+
+def save_ai_limits(patch: dict) -> dict:
+    cfg = ai_limits() | {k: int(v) for k, v in patch.items() if v is not None}
+    names = {"voiceCallsPerDay": "Voice calls a day", "minutesPerCall": "Minutes per call",
+             "aiPerDay": "AI requests a day", "ttsPerDay": "Spoken replies a day"}
+    for k, (lo, hi) in AI_BOUNDS.items():
+        if not lo <= cfg[k] <= hi:
+            raise ValueError(f"{names[k]} must be {lo} to {hi}.")
+    _save({"ai": {k: cfg[k] for k in AI_BOUNDS}})
+    return ai_limits()

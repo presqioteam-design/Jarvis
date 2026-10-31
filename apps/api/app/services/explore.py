@@ -261,6 +261,7 @@ def enabled() -> bool:
 
 def set_enabled(on: bool) -> None:
     settings_ref().set({"exploreEnabled": on}, merge=True)
+    prefs.forget()
 
 
 def night() -> dict:

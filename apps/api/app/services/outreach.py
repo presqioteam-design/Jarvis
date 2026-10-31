@@ -118,6 +118,7 @@ def auto_enabled() -> bool:
 
 def set_auto(on: bool) -> None:
     prefs.ref().set({"autoSend": on}, merge=True)
+    prefs.forget()
 
 
 def days_text(days: list[int]) -> str:

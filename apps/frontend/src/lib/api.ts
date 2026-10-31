@@ -116,3 +116,12 @@ export type DatabaseUsage =
   | { error: "unavailable"; resetsAt: string };
 export type UsageView = { meters: UsageMeter[]; database: DatabaseUsage };
 export const getUsage = () => call<UsageView>("/settings/usage");
+
+export type AiLimits = { voiceCallsPerDay: number; minutesPerCall: number; aiPerDay: number; ttsPerDay: number };
+export type AiView = {
+  settings: AiLimits;
+  bounds: Record<keyof AiLimits, { min: number; max: number }>;
+  usedToday: { voiceCallsPerDay: number; aiPerDay: number; ttsPerDay: number };
+};
+export const getAiLimits = () => call<AiView>("/settings/ai");
+export const saveAiLimits = (patch: Partial<AiLimits>) => call<AiView>("/settings/ai", patch);
