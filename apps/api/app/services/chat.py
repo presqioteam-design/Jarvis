@@ -250,7 +250,7 @@ async def handle(text: str, channel: str) -> tuple[str, bool]:
         return reply, started
 
     history = recent_history()
-    system = SYSTEM.format(facts=presqio.FACTS, now=now_local().strftime("%A %d %b %Y, %H:%M"),
+    system = SYSTEM.format(facts=presqio.facts(), now=now_local().strftime("%A %d %b %Y, %H:%M"),
                            category_keys="|".join([categories.ALL, *(c.key for c in categories.CATEGORIES)]))
     messages = [*history, {"role": "user", "content": f"DATA:\n{context_block()}\n\nADMIN: {text}"}]
     raw = await llm.complete(system, messages, max_tokens=1200, json=True)

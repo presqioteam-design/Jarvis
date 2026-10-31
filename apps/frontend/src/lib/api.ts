@@ -93,3 +93,11 @@ export const getFinding = () => call<FindingView>("/settings/finding");
 export const saveFinding = (patch: Partial<FindingSettings>) => call<FindingView>("/settings/finding", patch);
 export const prioritiseCity = (city: string) => call<FindingView & { note: string }>("/settings/explore/prioritise", { city });
 export const skipCity = (id: string, skipped: boolean) => call<FindingView>("/settings/explore/skip", { id, skipped });
+
+export type EmailSettings = { senderName: string; phone: string; website: string };
+export type EmailsView = { settings: EmailSettings; categories: { key: string; label: string }[] };
+export type EmailPreview = { from: string; emails: { label: string; subject: string; body: string }[] };
+export const getEmails = () => call<EmailsView>("/settings/emails");
+export const saveEmails = (patch: Partial<EmailSettings>) => call<EmailsView>("/settings/emails", patch);
+export const previewEmails = (body: Partial<EmailSettings> & { category: string; name: string; area: string }) =>
+  call<EmailPreview>("/settings/emails/preview", body);

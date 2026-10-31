@@ -9,7 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..deps import require_user
-from ..services import categories, explore, outreach, prefs
+from ..config import get_settings
+from ..services import categories, explore, outreach, prefs, templates
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_user)])
 
@@ -116,3 +117,47 @@ def skip(body: SkipIn):
     except ValueError as e:
         raise HTTPException(404, str(e))
     return _finding_view()
+
+
+# ── emails ───────────────────────────────────────────────────────────────────
+
+def _emails_view() -> dict:
+    return {"settings": prefs.emails(), "categories": [{"key": c.key, "label": c.label} for c in categories.CATEGORIES]}
+
+
+@router.get("/emails")
+def get_emails():
+    return _emails_view()
+
+
+class EmailsIn(BaseModel):
+    senderName: str | None = Field(default=None, max_length=80)
+    phone: str | None = Field(default=None, max_length=30)
+    website: str | None = Field(default=None, max_length=200)
+
+
+@router.post("/emails")
+def save_emails(body: EmailsIn):
+    try:
+        prefs.save_emails(body.model_dump())
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return _emails_view()
+
+
+class PreviewIn(EmailsIn):
+    category: str = categories.DEFAULT
+    name: str = Field(default="Sunrise Residency", max_length=120)
+    area: str = Field(default="Madhapur", max_length=80)
+
+
+@router.post("/emails/preview")
+def preview(body: PreviewIn):
+    """The three emails a business of this kind gets, with the details being edited (not yet saved)."""
+    me = prefs.emails() | {k: v.strip() for k, v in body.model_dump(include={"senderName", "phone", "website"}).items() if v and v.strip()}
+    out = []
+    for step, when in ((0, "First email"), (1, "Follow-up 1"), (2, "Follow-up 2")):
+        e = templates.render(step, body.name or "Sunrise Residency", body.area or "Madhapur", me["senderName"], body.category,
+                             me["phone"], me["website"])
+        out.append({"label": when, "subject": e.subject, "body": e.body})
+    return {"emails": out, "from": f"{me['senderName']} <{get_settings().email_address}>"}

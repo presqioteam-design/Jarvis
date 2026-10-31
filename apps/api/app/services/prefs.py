@@ -112,3 +112,27 @@ def save_finding(patch: dict) -> dict:
     ref().set({"finding": {"off": [k for k in keys if k not in on], "areasPerNight": areas},
                **({"exploreEnabled": bool(patch["exploreEnabled"])} if patch.get("exploreEnabled") is not None else {})}, merge=True)
     return finding()
+
+
+# ── emails: who they're from ─────────────────────────────────────────────────
+
+def emails() -> dict:
+    from . import presqio   # presqio reads these settings too
+    saved = (ref().get().to_dict() or {}).get("emails") or {}
+    return {
+        "senderName": saved.get("senderName", get_settings().sender_name),
+        "phone": saved.get("phone", presqio.PHONE),
+        "website": saved.get("website", presqio.WEBSITE),
+    }
+
+
+def save_emails(patch: dict) -> dict:
+    cfg = emails() | {k: v.strip() for k, v in patch.items() if isinstance(v, str)}
+    if not 2 <= len(cfg["senderName"]) <= 60:
+        raise ValueError("The sender name must be 2 to 60 characters.")
+    if not re.fullmatch(r"\+?[\d ()-]{8,20}", cfg["phone"]) or len(re.sub(r"\D", "", cfg["phone"])) < 8:
+        raise ValueError("Enter a phone number like +91 63093 87321.")
+    if not re.fullmatch(r"https?://[^\s/$.?#][^\s]*\.[^\s]{2,}", cfg["website"]):
+        raise ValueError("Enter the website as a full address, like https://presqio.pages.dev.")
+    ref().set({"emails": cfg}, merge=True)
+    return emails()

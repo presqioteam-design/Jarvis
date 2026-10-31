@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  errorText, getFinding, getSending, prioritiseCity, saveFinding, saveSending, skipCity,
-  type FindingSettings, type FindingView, type SendingSettings, type SendingView,
+  errorText, getEmails, getFinding, getSending, previewEmails, prioritiseCity, saveEmails, saveFinding, saveSending, skipCity,
+  type EmailPreview, type EmailSettings, type EmailsView, type FindingSettings, type FindingView, type SendingSettings, type SendingView,
 } from "../lib/api";
 import Icon from "../components/Icon";
 
@@ -38,6 +38,7 @@ export default function Settings() {
       </header>
       <SendingSection />
       <FindingSection />
+      <EmailsSection />
     </div>
   );
 }
@@ -401,6 +402,161 @@ function FindingSection() {
             );
           })}
         </ol>
+      </div>
+    </section>
+  );
+}
+
+// ── section 3: emails ──────────────────────────────────────────────────────
+
+let lastEmails: EmailsView | null = null;
+
+function EmailsSection() {
+  const [view, setViewState] = useState<EmailsView | null>(lastEmails);
+  const [form, setForm] = useState<EmailSettings | null>(lastEmails?.settings ?? null);
+  const [kind, setKind] = useState("hotels");
+  const [sample, setSample] = useState({ name: "Sunrise Residency", area: "Madhapur" });
+  const [step, setStep] = useState(0);
+  const [preview, setPreview] = useState<EmailPreview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+  const setView = (v: EmailsView) => {
+    lastEmails = v;
+    setViewState(v);
+  };
+
+  useEffect(() => {
+    const before = lastEmails;
+    getEmails()
+      .then((v) => {
+        setView(v);
+        setForm((f) => (!f || !before || JSON.stringify(f) === JSON.stringify(before.settings) ? v.settings : f));
+      })
+      .catch((e) => {
+        if (!before) setError(errorText(e, "Couldn't load these settings. The server may be waking up; try again in a minute."));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // the preview follows every edit, including unsaved sender details (after a short pause in typing)
+  useEffect(() => {
+    if (!form) return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      previewEmails({ ...form, category: kind, name: sample.name, area: sample.area })
+        .then((p) => !cancelled && setPreview(p))
+        .catch(() => undefined);
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [form, kind, sample]);
+
+  const changed = useMemo(() => !!form && !!view && JSON.stringify(form) !== JSON.stringify(view.settings), [form, view]);
+
+  if (!form || !view) {
+    return (
+      <section className="card settings-card">
+        <h2>Emails</h2>
+        {error ? <p className="error" role="alert">{error}</p> : <p className="muted"><span className="spinner" /> Loading…</p>}
+      </section>
+    );
+  }
+
+  const set = (patch: Partial<EmailSettings>) => {
+    setSaved(false);
+    setForm({ ...form, ...patch });
+  };
+
+  async function save() {
+    setBusy(true);
+    setError("");
+    try {
+      const v = await saveEmails(form!);
+      setView(v);
+      setForm(v.settings);
+      setSaved(true);
+    } catch (e) {
+      setError(errorText(e, "Couldn't save. Check your connection and try again."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const mail = preview?.emails[step];
+
+  return (
+    <section className="card settings-card" aria-labelledby="emails-title">
+      <div>
+        <h2 id="emails-title">Emails</h2>
+        <p className="muted small">
+          Who the emails are from, and exactly what each kind of business receives. The wording is fixed (not written
+          by AI) so every email is accurate; only the name, area and these details change.
+        </p>
+      </div>
+
+      <div className="settings-grid stack-on-phone">
+        <div className="field">
+          <label htmlFor="sender">Sender name</label>
+          <input id="sender" className="input" value={form.senderName} maxLength={60} onChange={(e) => set({ senderName: e.target.value })} />
+          <span className="muted small">Shown as who the email is from, and in the signature.</span>
+        </div>
+        <div className="field">
+          <label htmlFor="phone">Phone (call or WhatsApp)</label>
+          <input id="phone" className="input" type="tel" value={form.phone} onChange={(e) => set({ phone: e.target.value })} />
+          <span className="muted small">Also what Jarvis gives when asked about pricing.</span>
+        </div>
+        <div className="field">
+          <label htmlFor="website">Website</label>
+          <input id="website" className="input" type="url" value={form.website} onChange={(e) => set({ website: e.target.value })} />
+          <span className="muted small">In the signature.</span>
+        </div>
+      </div>
+
+      {error && <p className="error" role="alert">{error}</p>}
+      <div className="settings-actions">
+        {saved && !changed && <span className="saved"><Icon name="check" size={16} /> Saved</span>}
+        <button className="btn" type="button" disabled={!changed || busy} onClick={() => { setForm(view.settings); setError(""); }}>Undo changes</button>
+        <button className="btn primary" type="button" disabled={!changed || busy} onClick={save}>{busy ? "Saving…" : "Save"}</button>
+      </div>
+
+      <div className="settings-sub">
+        <h3>Preview</h3>
+        <div className="preview-controls">
+          <div className="field">
+            <label htmlFor="pv-kind">Kind of business</label>
+            <select id="pv-kind" className="input" value={kind} onChange={(e) => setKind(e.target.value)}>
+              {view.categories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="pv-name">Business name</label>
+            <input id="pv-name" className="input" value={sample.name} maxLength={80} onChange={(e) => setSample({ ...sample, name: e.target.value })} />
+          </div>
+          <div className="field">
+            <label htmlFor="pv-area">Area</label>
+            <input id="pv-area" className="input" value={sample.area} maxLength={60} onChange={(e) => setSample({ ...sample, area: e.target.value })} />
+          </div>
+        </div>
+        <div className="segmented email-tabs" role="tablist" aria-label="Which email">
+          {["First email", "Follow-up 1", "Follow-up 2"].map((l, i) => (
+            <button key={l} type="button" role="tab" aria-selected={step === i} className={step === i ? "active" : ""} onClick={() => setStep(i)}>{l}</button>
+          ))}
+        </div>
+        {mail ? (
+          <article className="email-preview" aria-live="polite">
+            <dl>
+              <dt>From</dt><dd>{preview!.from}</dd>
+              <dt>Subject</dt><dd><strong>{mail.subject}</strong></dd>
+            </dl>
+            <div className="email-body">{mail.body}</div>
+          </article>
+        ) : (
+          <p className="muted"><span className="spinner" /> Loading the preview…</p>
+        )}
+        <p className="muted small">Follow-ups go as replies in the same email thread, so the business sees them together.</p>
       </div>
     </section>
   );

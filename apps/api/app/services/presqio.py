@@ -10,7 +10,7 @@ SIGNUP_URL = "https://presqio.pages.dev/register"
 TRIAL = "14-day free trial of the Growth plan, no card needed"
 
 # Given to the AI when it answers a hotel's questions. Plain facts only.
-FACTS = f"""
+_FACTS = """
 Presqio is phone-based staff attendance and payroll for businesses with one or more branches, such as hotels,
 hospitals and clinics, schools and colleges, restaurants, factories, stores, IT companies, offices, security agencies,
 gyms and coaching centres.
@@ -55,3 +55,14 @@ Presqio does NOT have these. Never claim them:
 - Automatic PF/ESI/TDS calculation (deductions are lines the admin sets up)
 - A Play Store or App Store app (employees use the phone browser)
 """.strip()
+
+
+
+def facts() -> str:
+    """The product facts with the phone and website from Settings."""
+    from . import prefs
+    e = prefs.emails()
+    return _FACTS.format(PHONE=e["phone"], WEBSITE=e["website"], SIGNUP_URL=SIGNUP_URL, TRIAL=TRIAL)
+
+
+FACTS = _FACTS.format(PHONE=PHONE, WEBSITE=WEBSITE, SIGNUP_URL=SIGNUP_URL, TRIAL=TRIAL)   # defaults, for tests

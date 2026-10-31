@@ -176,13 +176,15 @@ async def _send_all(targets: list[dict], step: int | None) -> tuple[list[dict], 
     sent, failed = [], []
     f1, f2 = prefs.sending()["followUpDays"]
     gaps = [f1, f2 - f1]   # days until follow-up 1, then until follow-up 2
+    me = prefs.emails()
     for i, lead in enumerate(targets):
         n = lead.get("followUps", 0) + 1 if step is None else step
         email = templates.render(n, lead["name"], lead.get("area") or templates.area_from(lead.get("address", "")),
-                                 get_settings().sender_name, lead.get("category"))
+                                 me["senderName"], lead.get("category"), me["phone"], me["website"])
         try:
             msg_id, thread_id = await mailer.send(lead["to"], email.subject, email.body,
-                                                  lead.get("lastMessageId") if n else None, lead.get("threadId") if n else None)
+                                                  lead.get("lastMessageId") if n else None, lead.get("threadId") if n else None,
+                                                  sender_name=me["senderName"])
         except mailer.MailSetupError as e:
             failed.append(f"Stopped before sending anything: {e}")
             break

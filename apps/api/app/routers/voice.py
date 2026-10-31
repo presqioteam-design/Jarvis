@@ -123,7 +123,7 @@ async def session():
             "speechConfig": {"languageCode": "en-US", "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": VOICE}}},
         },
         "systemInstruction": {"parts": [{"text": INSTRUCTIONS.format(
-            facts=presqio.FACTS, now=now_local().strftime("%A %d %b, %I:%M %p"), data=data)}]},
+            facts=presqio.facts(), now=now_local().strftime("%A %d %b, %I:%M %p"), data=data)}]},
         "tools": [TOOL],
         # end your turn after a short pause even with background noise, so Jarvis doesn't keep waiting
         "realtimeInputConfig": {"automaticActivityDetection": {

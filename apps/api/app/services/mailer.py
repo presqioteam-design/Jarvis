@@ -22,10 +22,10 @@ def mode() -> str:
     return "gmail-api" if gmail.enabled() else "smtp"
 
 
-def build(to: str, subject: str, body: str, in_reply_to: str | None) -> EmailMessage:
+def build(to: str, subject: str, body: str, in_reply_to: str | None, sender_name: str | None = None) -> EmailMessage:
     s = get_settings()
     msg = EmailMessage()
-    msg["From"] = formataddr((s.sender_name, s.email_address))
+    msg["From"] = formataddr((sender_name or s.sender_name, s.email_address))
     msg["To"] = to
     msg["Subject"] = subject
     msg["Message-ID"] = make_msgid(domain=s.email_address.split("@")[-1])
@@ -45,9 +45,10 @@ def _smtp_send(msg: EmailMessage) -> None:
         smtp.send_message(msg)
 
 
-async def send(to: str, subject: str, body: str, in_reply_to: str | None = None, thread_id: str | None = None) -> tuple[str, str | None]:
+async def send(to: str, subject: str, body: str, in_reply_to: str | None = None, thread_id: str | None = None,
+               sender_name: str | None = None) -> tuple[str, str | None]:
     """-> (Message-ID, Gmail thread id or None). Both are stored to match replies and thread follow-ups."""
-    msg = build(to, subject, body, in_reply_to)
+    msg = build(to, subject, body, in_reply_to, sender_name)
     if gmail.enabled():
         return await gmail.send(msg, thread_id)
     if get_settings().render_external_url:

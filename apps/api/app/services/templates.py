@@ -67,13 +67,14 @@ Thank you for your time.
 SEQUENCE = [FIRST, FOLLOW_UP_1, FOLLOW_UP_2]
 
 
-def render(step: int, hotel: str, area: str, sender: str = "Presqio Team", category: str | None = None) -> Email:
+def render(step: int, hotel: str, area: str, sender: str = "Presqio Team", category: str | None = None,
+           phone: str = PHONE, website: str = WEBSITE) -> Email:
     """step 0 = first email; 1 and 2 are follow-ups sent as replies in the same thread."""
     cat = categories.get(category)
-    fields = {"hotel": hotel.strip(), "area": area.strip() or "your area", "signup": SIGNUP_URL, "phone": PHONE,
+    fields = {"hotel": hotel.strip(), "area": area.strip() or "your area", "signup": SIGNUP_URL, "phone": phone,
               "fit": cat.fit, "place": cat.place, "shifts": cat.shifts, "branch": cat.branch}
     sender = sender if "presqio" in sender.lower() else f"{sender}\nPresqio"
-    signature = SIGNATURE.format(sender=sender, phone=PHONE, website=WEBSITE)
+    signature = SIGNATURE.format(sender=sender, phone=phone, website=website)
     body = SEQUENCE[step].format(**fields, signature=signature, opt_out=OPT_OUT)
     subject = f"Staff attendance for {fields['hotel']}"
     return Email(subject=subject if step == 0 else f"Re: {subject}", body=body)
