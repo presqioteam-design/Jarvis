@@ -6,7 +6,7 @@ You can also trigger them by hand with curl while developing.
 from fastapi import APIRouter, Depends
 
 from ..deps import require_cron
-from ..services import explore, inbox, outreach, report
+from ..services import chat, explore, inbox, outreach, report
 
 router = APIRouter(prefix="/jobs", tags=["jobs"], dependencies=[Depends(require_cron)])
 
@@ -16,6 +16,7 @@ async def tick():
     """Cron, every 30 min in the day: start an automatic batch if it's sending time,
     otherwise just check replies. Also keeps the free Render instance awake."""
     await explore.morning_summary()   # last night's explorer results, once
+    chat.prune_history()              # chat history is kept for 24 hours
     status = outreach.auto_send()
     replies = 0 if status == "started" else await inbox.check()   # a batch checks replies itself
     return {"ok": True, "autoSend": status, "newReplies": replies}

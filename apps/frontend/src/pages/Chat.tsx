@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
-import { collection, orderBy, query } from "firebase/firestore";
+import { collection, orderBy, query, where } from "firebase/firestore";
 import type { ChatMessage } from "@jarvis/shared";
 import { db, userPath } from "../lib/firebase";
 import { errorText, sendChat } from "../lib/api";
@@ -16,9 +16,10 @@ export default function Chat() {
   const [error, setError] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
 
-  // newest 30 live; scrolling to the top loads the 30 before them
+  // the last 24 hours only (the server deletes older messages): newest 30 live, older ones on scroll up
+  const [since] = useState(() => new Date(Date.now() - 24 * 3600_000).toISOString());
   const history = usePaged<ChatMessage>(
-    query(collection(db, userPath(user.uid, "chats")), orderBy("createdAt", "desc")),
+    query(collection(db, userPath(user.uid, "chats")), where("createdAt", ">=", since), orderBy("createdAt", "desc")),
     `chats:${user.uid}`,
     30,
   );
@@ -92,12 +93,13 @@ export default function Chat() {
 
       <div className="messages" ref={listRef}>
         {history.ready && <LoadMore root={listRef} more={history.more && primed} loading={history.loading} onVisible={loadOlder}
-          done={!history.more && messages.length > 30 ? "Start of the conversation" : ""} />}
+          done={!history.more && messages.length > 0 ? "Chats are kept for 24 hours" : ""} />}
         {messages.length === 0 && !busy && (
           <div className="chat-empty">
             <Logo size={48} />
             <h2>Ask me about your outreach</h2>
             <p className="muted">I can tell you who replied, who's interested and what I did today.</p>
+            <p className="muted small">Chats are kept for 24 hours.</p>
           </div>
         )}
         {messages.map((m) => (

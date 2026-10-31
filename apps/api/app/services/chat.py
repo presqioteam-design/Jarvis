@@ -10,10 +10,11 @@ import re
 from datetime import timedelta
 
 from firebase_admin import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 from google.api_core.exceptions import ResourceExhausted
 
 from ..config import get_settings
-from ..firebase import col
+from ..firebase import col, db
 from ..timeutil import now_local, now_utc
 from . import activity, categories, explore, inbox, leads, llm, outreach, presqio, report, telegram, usage, voice
 
@@ -146,6 +147,25 @@ def recent_history(limit: int = 10) -> list[dict]:
 
 def save(role: str, text: str, channel: str) -> None:
     col("chats").add({"role": role, "text": text, "channel": channel, "createdAt": now_utc().isoformat()})
+
+
+KEEP_CHAT_HOURS = 24
+
+
+def prune_history() -> int:
+    """Delete chat messages (web, Telegram and voice lines) older than KEEP_CHAT_HOURS.
+    Run by the 30-minute cron; reads only the messages it deletes."""
+    cutoff = (now_utc() - timedelta(hours=KEEP_CHAT_HOURS)).isoformat()
+    deleted = 0
+    while True:
+        old = list(col("chats").where(filter=FieldFilter("createdAt", "<", cutoff)).limit(400).select([]).stream())
+        if not old:
+            return deleted
+        batch = db().batch()
+        for d in old:
+            batch.delete(d.reference)
+        batch.commit()
+        deleted += len(old)
 
 
 HELP = """Here's what you can tell me:
