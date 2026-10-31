@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { collection, doc, limit, onSnapshot, orderBy, query } from "firebase/firestore";
+import { collection, doc, onSnapshot, orderBy, query } from "firebase/firestore";
 import { CATEGORIES, categoryLabel, type AreaSummary, type Campaign, type CategoryKey, type CitySummary } from "@jarvis/shared";
 import { db, userPath } from "../lib/firebase";
 import { errorText, resumeScan, scanPlace } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { slug, timeAgo } from "../lib/format";
+import { LoadMore, usePaged } from "../lib/paging";
 import Icon from "../components/Icon";
 
 type Row = Campaign & { id: string };
@@ -21,7 +22,6 @@ const PHASE: Record<string, string> = {
 
 export default function Campaigns() {
   const user = useUser()!;
-  const [campaigns, setCampaigns] = useState<Row[]>([]);
   const [mode, setMode] = useState<"city" | "spot">("city");
   const [place, setPlace] = useState("");
   const [radius, setRadius] = useState(3);
@@ -29,14 +29,16 @@ export default function Campaigns() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  const listRef = useRef<HTMLDivElement>(null);
+  const scans = usePaged<Campaign>(
+    query(collection(db, userPath(user.uid, "campaigns")), orderBy("createdAt", "desc")),
+    `campaigns:${user.uid}`,
+    10,
+  );
+  const campaigns: Row[] = scans.rows;
   useEffect(() => {
-    const q = query(collection(db, userPath(user.uid, "campaigns")), orderBy("createdAt", "desc"), limit(20));
-    return onSnapshot(
-      q,
-      (s) => setCampaigns(s.docs.map((d) => ({ id: d.id, ...(d.data() as Campaign) }))),
-      () => setError("Couldn't load scans. Check that the Firestore rules are published."),
-    );
-  }, [user.uid]);
+    if (scans.error) setError("Couldn't load scans. Check that the Firestore rules are published.");
+  }, [scans.error]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -102,14 +104,24 @@ export default function Campaigns() {
 
       {error && <p className="error" role="alert">{error}</p>}
 
-      {campaigns.length === 0 ? (
-        <div className="card empty-card">
-          <Icon name="campaign" size={28} />
-          <p className="muted">No scans yet. Start with your city.</p>
+      <section className="card scans">
+        <div className="card-head">
+          <h2>Your scans</h2>
+          <span className="muted small">{scans.ready ? `${campaigns.length}${scans.more ? "+" : ""} scans, newest first` : ""}</span>
         </div>
-      ) : (
-        campaigns.map((c) => <ScanCard key={c.id} c={c} />)
-      )}
+        <div className="scans-scroll" ref={listRef}>
+          {scans.ready && campaigns.length === 0 ? (
+            <div className="empty-card">
+              <Icon name="campaign" size={28} />
+              <p className="muted">No scans yet. Start with your city.</p>
+            </div>
+          ) : (
+            campaigns.map((c) => <ScanCard key={c.id} c={c} />)
+          )}
+          <LoadMore root={listRef} more={scans.more} loading={scans.loading} onVisible={scans.loadMore}
+            done={campaigns.length > 10 ? `All ${campaigns.length} scans shown` : ""} />
+        </div>
+      </section>
     </div>
   );
 }
@@ -176,7 +188,8 @@ function ScanCard({ c }: { c: Row }) {
       {ready && (
         <>
           <div className="stat-row">
-            <Stat label="New from this scan" value={c.scan?.found ?? 0} />
+            {/* scans from before email-only saving counted phone-only places (since removed) */}
+            {c.category && <Stat label="New from this scan" value={c.scan?.found ?? 0} />}
             <Stat label="To email in the area" value={c.stats.withEmail} />
           </div>
           <div className="row-between">
@@ -188,7 +201,7 @@ function ScanCard({ c }: { c: Row }) {
             </Link>
           </div>
           {open && (
-            <div className="table-wrap">
+            <div className="table-wrap areas-scroll">
               <table className="areas">
                 <thead>
                   <tr>

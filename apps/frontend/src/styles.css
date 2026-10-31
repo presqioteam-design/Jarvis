@@ -146,6 +146,7 @@ code { font: 13px "JetBrains Mono", monospace; background: rgba(255,255,255,0.06
 .list li:last-child { border-bottom: 0; }
 .list-title { font-weight: 500; }
 .feed li { justify-content: flex-start; }
+.list li.load-row { border: 0; padding: 0; justify-content: center; }
 .feed-text { flex: 1; min-width: 0; }
 .feed-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--panel-2); color: var(--muted); flex: none; }
 .feed-icon.email_sent { color: var(--c-emailed); }
@@ -259,6 +260,13 @@ a.contact:hover { color: var(--accent); }
 .segmented button.active { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 1px 0 rgba(255,255,255,.04); }
 .hint { flex-basis: 100%; margin: 0; }
 .campaign { margin-bottom: 0; }
+/* the scans list scrolls inside its own card; each scan's area table scrolls inside the scan */
+.card.scans { padding-bottom: 8px; }
+.scans-scroll { max-height: calc(100vh - 220px); min-height: 240px; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 14px; margin: 0 -12px; padding: 2px 12px 6px; }
+.scans-scroll .card.campaign { background: var(--panel-2); box-shadow: none; flex: none; }
+.areas-scroll { max-height: 360px; overflow-y: auto; overscroll-behavior: contain; }
+.areas-scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--panel-2); }
 .progress-block { display: flex; flex-direction: column; gap: 12px; }
 .row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .table-wrap { overflow-x: auto; margin: 0 -24px -22px; border-top: 1px solid var(--border); }
@@ -436,6 +444,7 @@ td.strong { color: var(--c-customer); font-weight: 600; }
   .lead .pill { grid-column: 2; grid-row: 1; }
   .filters { flex-direction: column; width: 100%; }
   .lead-scroll { max-height: 70vh; }
+  .scans-scroll { max-height: calc(100dvh - 210px - env(safe-area-inset-bottom)); }
   .table-wrap { margin: 0 -24px -22px; }
   table.areas th, table.areas td { padding: 10px 14px; }
   .filters .input, .filters input.input { width: 100%; min-width: 0; }

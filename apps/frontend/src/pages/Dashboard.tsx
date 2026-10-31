@@ -1,13 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { collection, limit, onSnapshot, orderBy, query, where, type FirestoreError } from "firebase/firestore";
-import type { Activity, CitySummary, Lead, LeadStatus } from "@jarvis/shared";
+import { collection, onSnapshot, orderBy, query, where, type FirestoreError } from "firebase/firestore";
+import { categoryLabel, type Activity, type CitySummary, type Lead, type LeadStatus } from "@jarvis/shared";
 import { db, userPath } from "../lib/firebase";
 import { useUser } from "../lib/auth";
 import { greeting, percent, timeAgo } from "../lib/format";
+import { LoadMore, usePaged } from "../lib/paging";
 import Icon, { type IconName } from "../components/Icon";
-
-type WithId<T> = T & { id: string };
 
 const STAGES: { key: string; label: string; statuses: LeadStatus[]; color: string }[] = [
   { key: "found", label: "Found", statuses: ["new", "ready", "no_contact"], color: "var(--c-found)" },
@@ -35,8 +34,24 @@ const STATUS_LABEL: Partial<Record<LeadStatus, string>> = {
 export default function Dashboard() {
   const user = useUser()!;
   const [cities, setCities] = useState<CitySummary[]>([]);
-  const [attention, setAttention] = useState<WithId<Lead>[]>([]);
-  const [feed, setFeed] = useState<WithId<Activity>[]>([]);
+  // both panels scroll inside themselves and load the next page at the bottom
+  const attentionRef = useRef<HTMLUListElement>(null);
+  const feedRef = useRef<HTMLUListElement>(null);
+  const hot = usePaged<Lead>(
+    query(collection(db, userPath(user.uid, "leads")), where("status", "in", ["replied", "interested", "demo"])),
+    `hot:${user.uid}`,
+    15,
+  );
+  const activity = usePaged<Activity>(
+    query(collection(db, userPath(user.uid, "activity")), orderBy("at", "desc")),
+    `activity:${user.uid}`,
+    20,
+  );
+  const attention = [...hot.rows].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  useEffect(() => {
+    if (hot.error || activity.error) setError("Couldn't load replies or activity. Try again in a minute.");
+  }, [hot.error, activity.error]);
+  const feed = activity.rows;
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
 
@@ -55,16 +70,6 @@ export default function Dashboard() {
           setCities(s.docs.map((d) => d.data() as CitySummary));
           setLoaded(true);
         },
-        onError,
-      ),
-      onSnapshot(
-        query(collection(db, userPath(user.uid, "leads")), where("status", "in", ["replied", "interested", "demo"]), limit(30)),
-        (s) => setAttention(s.docs.map((d) => ({ id: d.id, ...(d.data() as Lead) })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 6)),
-        onError,
-      ),
-      onSnapshot(
-        query(collection(db, userPath(user.uid, "activity")), orderBy("at", "desc"), limit(20)),
-        (s) => setFeed(s.docs.map((d) => ({ id: d.id, ...(d.data() as Activity) }))),
         onError,
       ),
     ];
@@ -153,16 +158,17 @@ export default function Dashboard() {
             {attention.length === 0 ? (
               <p className="empty">No replies waiting. Jarvis will alert you on Telegram when someone answers.</p>
             ) : (
-              <ul className="list panel-body">
+              <ul className="list panel-body" ref={attentionRef}>
                 {attention.map((l) => (
                   <li key={l.id}>
                     <div>
-                      <div className="list-title">{l.name}</div>
-                      <div className="muted small">{l.address}</div>
+                      <div className="list-title">{l.name} <span className="cat-tag">{categoryLabel(l.category)}</span></div>
+                      <div className="muted small">{[l.area, l.city].filter(Boolean).join(", ") || l.address}</div>
                     </div>
                     <span className={`pill ${l.status}`}>{STATUS_LABEL[l.status]}</span>
                   </li>
                 ))}
+                <li className="load-row"><LoadMore root={attentionRef} more={hot.more} loading={hot.loading} onVisible={hot.loadMore} /></li>
               </ul>
             )}
           </section>
@@ -174,7 +180,7 @@ export default function Dashboard() {
             {feed.length === 0 ? (
               <p className="empty">Nothing yet.</p>
             ) : (
-              <ul className="list feed panel-body">
+              <ul className="list feed panel-body" ref={feedRef}>
                 {feed.map((a) => (
                   <li key={a.id}>
                     <span className={`feed-icon ${a.type}`}><Icon name={ACTIVITY_ICON[a.type]} size={16} /></span>
@@ -182,6 +188,10 @@ export default function Dashboard() {
                     <span className="muted small nowrap">{timeAgo(a.at)}</span>
                   </li>
                 ))}
+                <li className="load-row">
+                  <LoadMore root={feedRef} more={activity.more} loading={activity.loading} onVisible={activity.loadMore}
+                    done={feed.length > 20 ? "That's everything" : ""} />
+                </li>
               </ul>
             )}
           </section>
