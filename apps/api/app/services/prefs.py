@@ -186,3 +186,19 @@ def save_ai_limits(patch: dict) -> dict:
             raise ValueError(f"{names[k]} must be {lo} to {hi}.")
     _save({"ai": {k: cfg[k] for k in AI_BOUNDS}})
     return ai_limits()
+
+
+# ── chat history ─────────────────────────────────────────────────────────────
+CHAT_HOURS = [24, 72, 168]   # 1 day, 3 days, 1 week
+
+
+def chat_hours() -> int:
+    h = _doc().get("chatHours", 24)
+    return h if h in CHAT_HOURS else 24
+
+
+def save_chat_hours(hours: int) -> int:
+    if hours not in CHAT_HOURS:
+        raise ValueError("Keep chats for 1 day, 3 days or 1 week.")
+    _save({"chatHours": hours})
+    return hours

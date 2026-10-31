@@ -16,8 +16,9 @@ export default function Chat() {
   const [error, setError] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
 
-  // the last 24 hours only (the server deletes older messages): newest 30 live, older ones on scroll up
-  const [since] = useState(() => new Date(Date.now() - 24 * 3600_000).toISOString());
+  // the server deletes chats older than the time set in Settings (1 day to 1 week), so this is
+  // everything kept: newest 30 live, older ones on scroll up
+  const [since] = useState(() => new Date(Date.now() - 7 * 24 * 3600_000).toISOString());
   const history = usePaged<ChatMessage>(
     query(collection(db, userPath(user.uid, "chats")), where("createdAt", ">=", since), orderBy("createdAt", "desc")),
     `chats:${user.uid}`,
@@ -93,13 +94,13 @@ export default function Chat() {
 
       <div className="messages" ref={listRef}>
         {history.ready && <LoadMore root={listRef} more={history.more && primed} loading={history.loading} onVisible={loadOlder}
-          done={!history.more && messages.length > 0 ? "Chats are kept for 24 hours" : ""} />}
+          done={!history.more && messages.length > 0 ? "Older chats are cleared automatically (Settings → Connections)" : ""} />}
         {messages.length === 0 && !busy && (
           <div className="chat-empty">
             <Logo size={48} />
             <h2>Ask me about your outreach</h2>
             <p className="muted">I can tell you who replied, who's interested and what I did today.</p>
-            <p className="muted small">Chats are kept for 24 hours.</p>
+            <p className="muted small">Older chats are cleared automatically; Settings → Connections sets how long they're kept.</p>
           </div>
         )}
         {messages.map((m) => (

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  blockAddress, errorText, getAiLimits, getDnc, getUsage, saveAiLimits, getEmails, getFinding, getSending, previewEmails, prioritiseCity, saveEmails, saveFinding,
+  blockAddress, checkTomTom, errorText, getAiLimits, getConnections, getDnc, getUsage, saveAiLimits, saveChatHours, getEmails, getFinding, getSending, previewEmails, prioritiseCity, saveEmails, saveFinding,
   saveSending, skipCity, unblockAddress,
-  type AiLimits, type AiView, type DncView, type UsageView, type EmailPreview, type EmailSettings, type EmailsView, type FindingSettings, type FindingView,
+  type AiLimits, type AiView, type ConnectionsView, type DncView, type ServiceStatus, type UsageView, type EmailPreview, type EmailSettings, type EmailsView, type FindingSettings, type FindingView,
   type SendingSettings, type SendingView,
 } from "../lib/api";
 import { categoryLabel } from "@jarvis/shared";
 import { timeAgo } from "../lib/format";
+import { logOut, useUser } from "../lib/auth";
 import Icon, { type IconName } from "../components/Icon";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -40,6 +41,7 @@ const SECTIONS: { key: string; label: string; icon: IconName; Body: () => React.
   { key: "emails", label: "Emails", icon: "chat", Body: EmailsSection },
   { key: "dnc", label: "Do not contact", icon: "ban", Body: DncSection },
   { key: "ai", label: "Voice & AI", icon: "mic", Body: AiSection },
+  { key: "account", label: "Connections", icon: "bolt", Body: ConnectionsSection },
 ];
 
 export default function Settings() {
@@ -952,5 +954,155 @@ function AiSection() {
         <button className="btn primary" type="button" disabled={!changed || busy || outOfRange} onClick={save}>{busy ? "Saving…" : "Save"}</button>
       </div>
     </section>
+  );
+}
+
+// ── connections and account ────────────────────────────────────────────────
+
+let lastConnections: ConnectionsView | null = null;
+
+const SERVICES: { key: keyof ConnectionsView["services"]; label: string; what: string }[] = [
+  { key: "gmail", label: "Gmail", what: "Sends the emails and reads replies" },
+  { key: "telegram", label: "Telegram", what: "Your reports, alerts and commands" },
+  { key: "gemini", label: "Gemini", what: "Chat, voice calls, sorting replies" },
+  { key: "tomtom", label: "TomTom maps", what: "Finding businesses" },
+  { key: "usagePermission", label: "Usage numbers", what: "Database meters on the Usage tab" },
+];
+
+const HOURS_LABEL: Record<number, string> = { 24: "1 day", 72: "3 days", 168: "1 week" };
+
+function Status({ ok }: { ok: boolean | null | undefined }) {
+  return <span className={`status-dot ${ok === true ? "ok" : ok === false ? "bad" : "unknown"}`} aria-label={ok ? "Working" : ok === false ? "Problem" : "Unknown"} />;
+}
+
+function ConnectionsSection() {
+  const user = useUser();
+  const [view, setViewState] = useState<ConnectionsView | null>(lastConnections);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [tomtom, setTomtom] = useState<ServiceStatus | null>(null);
+  const setView = (v: ConnectionsView) => {
+    lastConnections = v;
+    setViewState(v);
+  };
+
+  const load = (refresh = false) => {
+    setBusy(refresh ? "refresh" : "load");
+    getConnections(refresh)
+      .then((v) => {
+        setView(v);
+        setError("");
+      })
+      .catch((e) => setError(errorText(e, "Couldn't check the connections. The server may be waking up; try again in a minute.")))
+      .finally(() => setBusy(""));
+  };
+  useEffect(() => load(), []);
+
+  async function testTomTom() {
+    setBusy("tomtom");
+    try {
+      setTomtom(await checkTomTom());
+    } catch (e) {
+      setError(errorText(e, "Couldn't run the check. Try again."));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function changeHours(hours: number) {
+    if (!view) return;
+    setBusy("hours");
+    try {
+      await saveChatHours(hours);
+      setView({ ...view, chatHours: hours });
+    } catch (e) {
+      setError(errorText(e, "Couldn't save. Try again."));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <>
+      <section className="card settings-card" aria-labelledby="conn-title">
+        <div className="settings-head">
+          <div>
+            <h2 id="conn-title">Connections</h2>
+            <p className="muted small">The services Jarvis needs. A red one tells you what to fix. Keys are never shown here.</p>
+          </div>
+          <button type="button" className="btn small-btn" onClick={() => load(true)} disabled={!!busy}>
+            {busy === "refresh" ? "Checking…" : "Check again"}
+          </button>
+        </div>
+        {error && <p className="error" role="alert">{error}</p>}
+        {!view ? (
+          !error && <p className="muted"><span className="spinner" /> Checking…</p>
+        ) : (
+          <>
+            <ul className="status-list">
+              {SERVICES.map(({ key, label, what }) => {
+                const st = key === "tomtom" ? tomtom ?? view.services.tomtom : view.services[key];
+                return (
+                  <li key={key}>
+                    <Status ok={st?.ok} />
+                    <div className="q-main">
+                      <div className="q-name">{label} <span className="muted small">· {what}</span></div>
+                      <div className={`small ${st && !st.ok ? "status-bad" : "muted"}`}>
+                        {st ? st.detail : "Not checked: the check uses one of today's free map searches."}
+                      </div>
+                    </div>
+                    {key === "tomtom" && (
+                      <button type="button" className="btn small-btn" onClick={testTomTom} disabled={!!busy}>{busy === "tomtom" ? "Checking…" : "Check"}</button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="settings-sub">
+              <h3>Scheduled jobs</h3>
+              <p className="muted small">Run by the jarvis-cron worker on Cloudflare. If one stops, Jarvis can't send or explore on its own.</p>
+              <ul className="status-list">
+                {Object.entries(view.jobs).map(([key, j]) => (
+                  <li key={key}>
+                    <Status ok={j.ok} />
+                    <div className="q-main">
+                      <div className="q-name">{j.label}</div>
+                      <div className={`small ${j.ok === false ? "status-bad" : "muted"}`}>
+                        {j.lastRun ? `Last ran ${timeAgo(j.lastRun)}` : ""}{j.lastRun && j.detail ? ". " : ""}{j.detail}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </>
+        )}
+      </section>
+
+      <section className="card settings-card" aria-labelledby="account-title">
+        <h2 id="account-title">Account</h2>
+        <div className="account-row">
+          {user?.photoURL ? <img src={user.photoURL} alt="" className="avatar" referrerPolicy="no-referrer" />
+            : <span className="avatar fallback">{(user?.displayName ?? "A")[0]}</span>}
+          <div className="q-main">
+            <div className="q-name">{user?.displayName ?? "Admin"}</div>
+            <div className="muted small">{user?.email}</div>
+          </div>
+          <button type="button" className="btn small-btn" onClick={logOut}><Icon name="logout" size={16} /> Sign out</button>
+        </div>
+        <div className="field chat-hours">
+          <label htmlFor="chat-hours">Keep chat history for</label>
+          <select id="chat-hours" className="input" value={view?.chatHours ?? 24} disabled={!view || busy === "hours"}
+            onChange={(e) => changeHours(Number(e.target.value))}>
+            {(view?.chatHoursOptions ?? [24, 72, 168]).map((h) => <option key={h} value={h}>{HOURS_LABEL[h] ?? `${h} hours`}</option>)}
+          </select>
+          <span className="muted small">
+            Older messages (Chat page, Telegram and voice-call lines) are deleted from the database automatically.
+            Jarvis only uses the last few messages to follow a conversation. Telegram's own copies follow Telegram's
+            Auto-Delete setting in the chat.
+          </span>
+        </div>
+      </section>
+    </>
   );
 }

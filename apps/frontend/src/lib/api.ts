@@ -125,3 +125,16 @@ export type AiView = {
 };
 export const getAiLimits = () => call<AiView>("/settings/ai");
 export const saveAiLimits = (patch: Partial<AiLimits>) => call<AiView>("/settings/ai", patch);
+
+export type ServiceStatus = { ok: boolean; detail: string; checkedAt?: string };
+export type JobStatus = { label: string; lastRun: string | null; ok: boolean | null; detail: string };
+export type ConnectionsView = {
+  services: Partial<Record<"gmail" | "telegram" | "gemini" | "usagePermission" | "tomtom", ServiceStatus>>;
+  jobs: Record<string, JobStatus>;
+  checkedAt: string;
+  chatHours: number;
+  chatHoursOptions: number[];
+};
+export const getConnections = (refresh = false) => call<ConnectionsView>(`/settings/connections${refresh ? "?refresh=true" : ""}`);
+export const checkTomTom = () => call<ServiceStatus>("/settings/connections/tomtom", {});
+export const saveChatHours = (hours: number) => call<{ chatHours: number }>("/settings/chat-history", { hours });

@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from ..deps import require_user
 from ..config import get_settings
 from ..timeutil import now_local, now_utc
-from ..services import categories, dbusage, explore, leads, outreach, prefs, templates, usage
+from ..services import categories, dbusage, explore, health, leads, outreach, prefs, templates, usage
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_user)])
 
@@ -255,3 +255,28 @@ def save_ai(body: AiIn):
     except ValueError as e:
         raise HTTPException(422, str(e))
     return _ai_view()
+
+
+# ── connections and account ──────────────────────────────────────────────────
+
+@router.get("/connections")
+async def get_connections(refresh: bool = False):
+    result = await health.check(force=refresh)
+    return {**result, "chatHours": prefs.chat_hours(), "chatHoursOptions": prefs.CHAT_HOURS}
+
+
+@router.post("/connections/tomtom")
+async def check_tomtom():
+    return await health.check_tomtom()
+
+
+class ChatHoursIn(BaseModel):
+    hours: int
+
+
+@router.post("/chat-history")
+def save_chat_history(body: ChatHoursIn):
+    try:
+        return {"chatHours": prefs.save_chat_hours(body.hours)}
+    except ValueError as e:
+        raise HTTPException(422, str(e))
