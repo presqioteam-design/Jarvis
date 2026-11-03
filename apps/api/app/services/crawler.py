@@ -19,7 +19,10 @@ CONTACT_WORDS = ("contact", "about", "reach", "enquiry", "inquiry", "booking")
 # addresses that show up on websites but aren't the hotel's
 JUNK_DOMAINS = ("example.com", "sentry.io", "wixpress.com", "domain.com", "email.com", "yourdomain", "godaddy.com", "w3.org", "company.com", "mysite.com", "website.com")
 # mailboxes that reach the web designer or a robot, not the hotel
-JUNK_NAMES = ("you@", "your@", "name@", "yourname@", "user@", "webmaster@", "noreply@", "no-reply@", "donotreply@", "privacy@", "abuse@", "wordpress@")
+JUNK_NAMES = ("you@", "your@", "name@", "yourname@", "user@", "webmaster@", "noreply@", "no-reply@", "donotreply@", "privacy@", "abuse@", "wordpress@",
+              # placeholders left in website templates ("email@gmail.com", "example@...")
+              "email@", "example@", "test@", "sample@", "someone@", "username@", "youremail@", "your.email@", "abc@", "xyz@",
+              "mail@mail.", "info@info.", "admin@admin.")
 JUNK_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".css", ".js")
 # chains and booking sites: their emails reach head office, not the hotel owner
 AGGREGATORS = (

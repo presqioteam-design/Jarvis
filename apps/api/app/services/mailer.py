@@ -10,8 +10,11 @@ import ssl
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 
+import httpx
+
 from ..config import get_settings
 from . import gmail
+from .gmail import SendingLimited   # re-exported: callers catch mailer.SendingLimited
 
 
 class MailSetupError(RuntimeError):
@@ -59,3 +62,36 @@ async def send(to: str, subject: str, body: str, in_reply_to: str | None = None,
         )
     await asyncio.to_thread(_smtp_send, msg)
     return msg["Message-ID"], None
+
+
+# ── is the address worth sending to? ─────────────────────────────────────────
+# A domain that doesn't exist or takes no email gives an instant bounce, and bounces are what
+# make Google throttle the account. One free DNS lookup per domain (Google's DNS over HTTPS)
+# catches them before sending. Answers are kept for the life of the server.
+
+BIG_PROVIDERS = {"gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.in", "outlook.com", "hotmail.com", "live.com",
+                 "rediffmail.com", "icloud.com", "zoho.com", "protonmail.com", "aol.com"}
+_domain_ok: dict[str, bool] = {}
+
+
+async def accepts_email(address: str) -> bool:
+    """False only when DNS says the domain doesn't exist or has no mail server. Unsure -> True."""
+    domain = address.rsplit("@", 1)[-1].lower().strip()
+    if domain in BIG_PROVIDERS:
+        return True
+    if domain in _domain_ok:
+        return _domain_ok[domain]
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            mx = (await client.get("https://dns.google/resolve", params={"name": domain, "type": "MX"})).json()
+            if mx.get("Status") == 3:   # NXDOMAIN: the domain doesn't exist
+                ok = False
+            elif any(a.get("type") == 15 for a in mx.get("Answer", [])):
+                ok = True
+            else:   # no MX: mail falls back to the domain's own address, if it has one
+                a = (await client.get("https://dns.google/resolve", params={"name": domain, "type": "A"})).json()
+                ok = any(x.get("type") == 1 for x in a.get("Answer", []))
+    except (httpx.HTTPError, ValueError):
+        return True   # can't tell: don't hold the email back
+    _domain_ok[domain] = ok
+    return ok

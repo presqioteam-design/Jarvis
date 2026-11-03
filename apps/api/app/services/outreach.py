@@ -21,6 +21,16 @@ PAUSE_SECONDS = (20, 45)
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 _running: asyncio.Task | None = None
+# set when Gmail refuses to send (a limit or a spam hold): nothing more is tried until then,
+# so Jarvis doesn't keep knocking on a door that's shut (that makes the hold longer)
+LIMITED_PAUSE = timedelta(minutes=30)
+_limited_until = None
+_limited_reason = ""
+
+
+def gmail_limited() -> str:
+    """Google's reason if sending is paused because Gmail refused, else ""."""
+    return _limited_reason if _limited_until and now_utc() < _limited_until else ""
 
 
 def busy() -> bool:
@@ -142,6 +152,8 @@ def auto_send() -> str:
         return "outside sending hours"
     if busy():
         return "a batch is already sending"
+    if gmail_limited():
+        return "Gmail is limiting sending; trying again later"
     room = min(c["dailyAuto"], c["dailyCap"]) - sent_today()
     if room <= 0:
         return "daily limit reached"
@@ -174,7 +186,10 @@ async def _nothing_left_once_a_day() -> None:
 
 
 async def _send_all(targets: list[dict], step: int | None) -> tuple[list[dict], list[str]]:
+    global _limited_until, _limited_reason
     sent, failed = [], []
+    if gmail_limited():
+        return sent, failed
     f1, f2 = prefs.sending()["followUpDays"]
     gaps = [f1, f2 - f1]   # days until follow-up 1, then until follow-up 2
     me = prefs.emails()
@@ -182,12 +197,24 @@ async def _send_all(targets: list[dict], step: int | None) -> tuple[list[dict], 
         n = lead.get("followUps", 0) + 1 if step is None else step
         email = templates.render(n, lead["name"], lead.get("area") or templates.area_from(lead.get("address", "")),
                                  me["senderName"], lead.get("category"), me["phone"], me["website"])
+        # a first email to a domain that takes no mail would only bounce (and bounces get Gmail throttled)
+        if n == 0 and not await mailer.accepts_email(lead["to"]):
+            mark_undeliverable(lead)
+            failed.append(f"{lead['name']} ({lead['to']}): skipped, that domain doesn't receive email (marked bounced)")
+            continue
         try:
             msg_id, thread_id = await mailer.send(lead["to"], email.subject, email.body,
                                                   lead.get("lastMessageId") if n else None, lead.get("threadId") if n else None,
                                                   sender_name=me["senderName"])
         except mailer.MailSetupError as e:
             failed.append(f"Stopped before sending anything: {e}")
+            break
+        except mailer.SendingLimited as e:
+            _limited_until, _limited_reason = now_utc() + LIMITED_PAUSE, str(e)
+            failed.append(f"⏸ Gmail is refusing to send right now, so I stopped and will try again in 30 minutes. "
+                          f"Google says: {e}. This usually means a sending limit or a short spam hold; "
+                          "fewer emails a day and fewer bounces make it rarer.")
+            log.warning("Gmail refused to send: %s", e)
             break
         except Exception as e:
             log.exception("Send to %s failed", lead["to"])
@@ -218,6 +245,14 @@ async def _report(groups: list[tuple[str, list[dict]]], failed: list[str]) -> No
         lines += ["", f"❌ {len(failed)} failed:"] + failed
     lines += ["", f"Today: {sent_today()} of {prefs.sending()['dailyCap']} emails used."]
     await telegram.send("\n".join(lines))
+
+
+def mark_undeliverable(lead: dict) -> None:
+    """Never emailed: its domain doesn't exist or takes no email."""
+    now = now_utc().isoformat()
+    col("leads").document(lead["id"]).update({"status": "bounced", "nextActionAt": None, "updatedAt": now,
+                                              "bounceReason": "domain doesn't receive email"})
+    activity.log("status_change", f"Skipped {lead['name']}: {lead['to']} can't receive email (domain doesn't take mail)", lead["id"])
 
 
 def record(lead: dict, n: int, email: templates.Email, msg_id: str, thread_id: str | None, gaps: list[int]) -> None:

@@ -38,12 +38,28 @@ async def _headers(client: httpx.AsyncClient) -> dict:
     return {"Authorization": f"Bearer {await _access_token(client)}"}
 
 
+class SendingLimited(Exception):
+    """Gmail is refusing to send for now (403/429): a sending limit or a temporary spam hold.
+    The message is Google's own reason, in a sentence."""
+
+
+def _reason(r: httpx.Response) -> str:
+    try:
+        err = r.json().get("error", {})
+        why = (err.get("errors") or [{}])[0].get("reason", "")
+        return f"{err.get('message', '').strip()} ({why})" if why else err.get("message", "").strip()
+    except ValueError:
+        return r.text[:200]
+
+
 async def send(msg: EmailMessage, thread_id: str | None) -> tuple[str, str]:
     """-> (Message-ID header as delivered, Gmail thread id)."""
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(f"{API}/messages/send", headers=await _headers(client),
                               json={"raw": raw, **({"threadId": thread_id} if thread_id else {})})
+        if r.status_code in (403, 429):
+            raise SendingLimited(_reason(r) or f"Gmail refused with {r.status_code}")
         r.raise_for_status()
         sent = r.json()
         # read back the Message-ID Gmail kept, so replies and follow-ups match it
