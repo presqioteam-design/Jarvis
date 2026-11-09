@@ -16,7 +16,7 @@ from google.api_core.exceptions import ResourceExhausted
 from ..config import get_settings
 from ..firebase import col, db
 from ..timeutil import now_local, now_utc
-from . import activity, categories, explore, inbox, leads, llm, outreach, prefs, presqio, report, telegram, usage, voice
+from . import activity, categories, explore, gmail, inbox, leads, llm, outreach, prefs, presqio, report, telegram, usage, voice
 
 log = logging.getLogger(__name__)
 _tasks: set[asyncio.Task] = set()   # keep background scans alive
@@ -361,7 +361,11 @@ async def _explore_next(city: str) -> None:
 
 
 async def _check_replies() -> None:
-    n = await inbox.check()
+    try:
+        n = await inbox.check()
+    except gmail.ReadRefused as e:
+        await telegram.send(f"⚠️ Gmail won't let me read the inbox right now: {e}")
+        return
     await telegram.send("No new replies." if n == 0 else f"Done: {n} new replies (details above).")
 
 
