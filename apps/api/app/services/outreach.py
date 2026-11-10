@@ -14,7 +14,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from ..config import get_settings
 from ..firebase import col
 from ..timeutil import now_local, now_utc
-from . import activity, inbox, keepalive, leads, mailer, prefs, telegram, templates
+from . import activity, gmail, inbox, keepalive, leads, mailer, prefs, telegram, templates
 
 log = logging.getLogger(__name__)
 PAUSE_SECONDS = (20, 45)
@@ -42,8 +42,20 @@ def start(job) -> bool:
     global _running
     if busy():
         return False
-    _running = asyncio.create_task(job)
+    _running = asyncio.create_task(_reported(job))
     return True
+
+
+async def _reported(job) -> None:
+    """A background batch that crashes must say so; otherwise it just stops and nothing is sent or reported."""
+    try:
+        await job
+    except Exception as e:
+        log.exception("Send batch failed")
+        try:
+            await telegram.send(f"❌ The email batch stopped with an error before finishing: {type(e).__name__}: {str(e)[:200]}")
+        except Exception:
+            log.exception("Couldn't report the failed batch on Telegram")
 
 
 def sent_today() -> int:
@@ -100,8 +112,21 @@ async def send_first_emails(count: int, area: str | None = None) -> None:
     await run(targets, step=0)
 
 
+async def _replies_read() -> str:
+    """Check replies before sending. Returns Google's reason if Gmail won't let us read the inbox, else ""."""
+    try:
+        await inbox.check()
+        return ""
+    except gmail.ReadRefused as e:
+        log.warning("Gmail refused to read the inbox before sending: %s", e)
+        return str(e)
+
+
 async def send_follow_ups(count: int = 50) -> None:
-    await inbox.check()   # never follow up on someone who has replied or asked us to stop
+    # never follow up on someone who has replied or asked us to stop, so no inbox means no follow-ups
+    if why := await _replies_read():
+        await telegram.send(f"⚠️ No follow-ups sent: Gmail won't let me read the inbox to check for replies first. Google says: {why}")
+        return
     targets = due_follow_ups(min(count, prefs.sending()["dailyCap"] - sent_today()))
     if not targets:
         await telegram.send("No follow-ups are due right now.")
@@ -161,8 +186,10 @@ def auto_send() -> str:
 
 
 async def _auto_batch(room: int, per_run: int, follow_ups: bool) -> None:
-    await inbox.check()   # replies first: never email someone who just answered
-    follow = due_follow_ups(min(per_run, room)) if follow_ups else []
+    # replies first: never email someone who just answered. If the inbox can't be read, first emails
+    # (addresses never contacted) still go out, but follow-ups wait until replies can be checked.
+    unread = await _replies_read()
+    follow = due_follow_ups(min(per_run, room)) if follow_ups and not unread else []
     for t in follow:
         t["to"] = t["emailedTo"]
     first = pick_first_emails(min(per_run, room - len(follow)), None) if room > len(follow) else []
@@ -174,6 +201,8 @@ async def _auto_batch(room: int, per_run: int, follow_ups: bool) -> None:
         sent_n, failed_n = await _send_all(first, 0)
     stamp = now_local().strftime("%I:%M %p").lstrip("0")
     await _report([(f"🤖 Auto batch, {stamp}", []), (f"New ({len(sent_n)}):", sent_n), (f"Follow-ups ({len(sent_f)}):", sent_f)], failed_f + failed_n)
+    if unread:
+        await telegram.send(f"⏸ Follow-ups skipped this batch: Gmail won't let me read the inbox to check for replies first. Google says: {unread}")
 
 
 async def _nothing_left_once_a_day() -> None:
