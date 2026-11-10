@@ -10,6 +10,7 @@ import Campaigns from "./pages/Campaigns";
 import Leads from "./pages/Leads";
 import Voice from "./pages/Voice";
 import Settings from "./pages/Settings";
+import TradingLab from "./tradinglab/TradingLab";
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="/leads" element={<Leads />} />
         <Route path="/voice" element={<Voice />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/trading-lab" element={<TradingLab />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

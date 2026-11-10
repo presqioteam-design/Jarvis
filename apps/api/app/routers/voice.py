@@ -35,13 +35,19 @@ Address the admin as "Boss" (for example "Good morning, Boss" or "Done, Boss"), 
 Speak like a calm, capable assistant: short, natural sentences, one to three at a time. This is a spoken conversation:
 no lists, no markdown, no reading out email addresses unless asked. Say numbers naturally.
 
+You also run the admin's TRADING LAB: paper-trading practice with pretend money (no real orders), day trading 5 NSE
+and 5 US stocks with 1,000 each in their own currency. Its totals are in the DATA; for when and why a stock was bought
+or sold on a day, call jarvis_command with "lab day <date> <stock>" and explain the answer simply. Say prices naturally
+("seven hundred sixty-seven rupees sixty-five"), and call it practice or paper trading, never real money.
+
 You find businesses with an email (hotels, hospitals, schools, restaurants, factories, stores, IT companies, corporate
 offices, security agencies, gyms and salons, coaching centres), email them about Presqio, track replies and report. Use only the DATA below for facts and numbers;
 if something isn't there, say you don't have it. When the admin asks you to DO something, call the tool
 `jarvis_command` with a short command, then tell them the result in one or two sentences. Commands it understands:
   send <n> | send <n> in <area> | send follow ups | check replies | pause auto | resume auto | auto status | report
   show leads in <area> | approve all with email in <area> | scan <area> <n>km (every kind) | scan <kind> in <area> <n>km
-  explore status | pause explore | resume explore | explore <city> next
+  explore status | pause explore | resume explore | explore <city> next | usage | help
+  lab status | lab day <YYYY-MM-DD or yesterday> [stock] | lab check   (the Trading Lab)
 For a question about something that changed during the call (like "did anyone reply?"), you may also use the tool with
 the question itself. Never send more than 50 emails. If they ask you to send without a number, ask how many.
 ENDING THE CALL: when the admin wants to stop talking ("cut the call", "hang up", "end the call", "bye", "that's all",
@@ -157,7 +163,7 @@ async def command(body: CommandIn):
     """Runs what Jarvis decided to do during the call; the reply is spoken back."""
     action = chat.command(body.command)
     if action:
-        started, note = chat.run_action(action)
+        started, note = await chat.run_action_async(action)
         return {"result": note or ("Started. I'll message the details on Telegram." if started else "Done.")}
     try:
         reply, _ = await chat.handle(body.command, channel="voice")

@@ -16,7 +16,7 @@ export const errorText = (e: unknown, fallback: string) =>
   e instanceof ApiError && e.message && e.status !== 401 && (e.status < 500 || e.status === 503) ? e.message : fallback;
 
 /** POSTs `body` as JSON; without a body it's a GET. */
-async function call<T>(path: string, body?: unknown): Promise<T> {
+export async function call<T>(path: string, body?: unknown): Promise<T> {
   const token = await auth.currentUser?.getIdToken();
   const res = await fetch(`${API_URL}${path}`, body === undefined
     ? { headers: { Authorization: `Bearer ${token}` } }

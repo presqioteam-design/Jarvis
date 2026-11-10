@@ -65,6 +65,11 @@ app.include_router(settings.router)
 app.include_router(telegram.router)
 app.include_router(voice.router)
 
+# the Trading Lab lives in its own folder at the repo root (tradinglab/); this is its only hook into Jarvis
+from tradinglab.jarvis_api import router as tradinglab_router   # noqa: E402
+
+app.include_router(tradinglab_router)
+
 
 @app.get("/health")
 def health():

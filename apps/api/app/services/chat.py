@@ -45,6 +45,9 @@ or, when the admin clearly asks you to do something, one of these actions:
 {{"reply": "...", "action": {{"name": "approve", "numbers": [<numbers from the last list>]}}}}
 {{"reply": "...", "action": {{"name": "approve_all", "area": "<locality or null for the whole city>"}}}}
 {{"reply": "...", "action": {{"name": "block", "numbers": [<numbers from the last list>]}}}}
+{{"reply": "...", "action": {{"name": "lab_status"}}}}   (the Trading Lab's totals)
+{{"reply": "...", "action": {{"name": "lab_day", "date": "<YYYY-MM-DD or null for the latest>", "symbol": "<stock or null>"}}}}   (a lab day's trades, times and reasons)
+{{"reply": "...", "action": {{"name": "lab_check"}}}}   (replay sessions that finished since the last run)
 {{"reply": "...", "action": {{"name": "scan", "place": "<city, or area and city>", "radius_km": <number or null for a whole city>, "category": "<{category_keys}>"}}}}
 
 Rules:
@@ -59,6 +62,8 @@ Rules:
 - Answer questions from the DATA below; never invent businesses, numbers or replies. If the data doesn't have it, say so.
 - Keep replies short: 1-4 sentences, or a short list. Plain text, no markdown tables.
 - If asked about Presqio itself, use only the PRODUCT FACTS.
+- The TRADING LAB is the admin's paper-trading practice (pretend money, no real orders). Answer its totals from the
+  DATA; for when or why a stock was bought or sold on a day, use lab_day (work out the date from "yesterday" etc.).
 
 PRODUCT FACTS:
 {facts}
@@ -107,8 +112,18 @@ def context_block() -> str:
         f"NEEDS ATTENTION:\n{hot_lines}\n\n"
         f"SCANS:\n{camp_lines}\n\n"
         f"LAST 48 HOURS:\n{recent_lines}\n\n"
-        f"LAST LIST SHOWN: " + (", ".join(f"{i}. {r['name']}" for i, r in enumerate(_last_list, 1)) or "none")
+        f"LAST LIST SHOWN: " + (", ".join(f"{i}. {r['name']}" for i, r in enumerate(_last_list, 1)) or "none") + "\n\n"
+        + _lab_briefing()
     )
+
+
+def _lab_briefing() -> str:
+    try:
+        from tradinglab.jarvis_api import briefing   # the lab lives in its own folder; imported when needed
+        return briefing()
+    except Exception:
+        log.exception("Couldn't read the Trading Lab for the briefing")
+        return "TRADING LAB: couldn't be read just now."
 
 
 _last_list: list[dict] = []   # the numbered list last shown, so "approve 2" knows which hotel
@@ -200,6 +215,11 @@ Kinds: hotels, hospitals, schools, restaurants, factories, retail, IT, offices, 
 • explore status · pause explore / resume explore
 • explore Pune next — put a city first in line
 
+📈 Trading Lab (paper money, for learning)
+• lab status — totals per market and the last few days
+• lab day 2026-11-06 — every trade that day (add a stock: lab day yesterday HDFCBANK)
+• lab check — replay sessions that finished since the last run
+
 📊 report — today's numbers now (also sent at 7 PM, with a voice note)
 📈 usage — today's AI and voice usage against the daily limits
 🎙 You can send me voice notes too.
@@ -222,6 +242,10 @@ COMMANDS = [
      lambda m: {"name": "send_emails", "count": int(m[1]), "area": m[2]}),
     (re.compile(r"^send\s+follow[\s-]?ups?[.!]*$", re.I), lambda m: {"name": "send_follow_ups"}),
     (re.compile(r"^check\s+(?:the\s+)?(?:replies|inbox|mails?|emails?)[.!?]*$", re.I), lambda m: {"name": "check_replies"}),
+    (re.compile(r"^(?:trading\s+)?lab(?:\s+status)?[.!?]*$|^trading(?:\s+lab)?(?:\s+status)?[.!?]*$", re.I), lambda m: {"name": "lab_status"}),
+    (re.compile(r"^(?:check\s+(?:the\s+)?(?:trading\s+)?lab|(?:trading\s+)?lab\s+check)[.!?]*$", re.I), lambda m: {"name": "lab_check"}),
+    (re.compile(r"^(?:trading\s+)?lab\s+(?:day\s+)?(\d{4}-\d{2}-\d{2}|today|yesterday|latest|last)(?:\s+([A-Za-z&]+))?[.!?]*$", re.I),
+     lambda m: {"name": "lab_day", "date": m[1], "symbol": m[2]}),
     (re.compile(r"^approve\s+([\d,\s]+|\d+(?:\s*(?:,|and)\s*\d+)*)$", re.I), lambda m: {"name": "approve", "numbers": re.findall(r"\d+", m[1])}),
     (re.compile(r"^block\s+([\d,\s]+|\d+(?:\s*(?:,|and)\s*\d+)*)$", re.I), lambda m: {"name": "block", "numbers": re.findall(r"\d+", m[1])}),
 ]
@@ -241,7 +265,7 @@ async def handle(text: str, channel: str) -> tuple[str, bool]:
     save("user", text, channel)
     action = command(text)
     if action:
-        started, note = run_action(action)
+        started, note = await run_action_async(action)
         reply = note or ("On it." if started else "Done.")
         save("assistant", reply, channel)
         return reply, started
@@ -259,7 +283,7 @@ async def handle(text: str, channel: str) -> tuple[str, bool]:
 
     started = False
     if isinstance(action, dict):
-        started, note = run_action(action)
+        started, note = await run_action_async(action)
         if note:
             reply = note
     save("assistant", reply, channel)
@@ -279,6 +303,12 @@ def run_action(action: dict) -> tuple[bool, str]:
         return outreach.start(outreach.send_follow_ups()), ""
     if name == "help":
         return False, HELP
+    if name == "lab_status":
+        from tradinglab.jarvis_api import status_text
+        return False, status_text()
+    if name == "lab_check":
+        from tradinglab.jarvis_api import check_text
+        return False, check_text()
     if name == "explore_status":
         return False, explore.status()
     if name == "explore_on":
@@ -354,6 +384,27 @@ def run_action(action: dict) -> tuple[bool, str]:
         return False, (f"🔎 Scanning {place} for {categories.label_of(key)} (only ones with an email are saved). "
                        "This can take a while; I'll message you when it's done.")
     return False, ""
+
+
+def _lab_date(text: str | None) -> str | None:
+    """"yesterday" -> a date; "latest"/None -> None (the newest replayed day)."""
+    t = (text or "").strip().lower()
+    if t in ("", "latest", "last", "none", "null"):
+        return None
+    if t == "today":
+        return now_local().date().isoformat()
+    if t == "yesterday":
+        return (now_local().date() - timedelta(days=1)).isoformat()
+    return t
+
+
+async def run_action_async(action: dict) -> tuple[bool, str]:
+    """run_action, plus the actions that have to wait for an answer (a lab day needs its prices)."""
+    if action.get("name") == "lab_day":
+        from tradinglab.jarvis_api import day_text
+        sym = action.get("symbol")
+        return False, await day_text(_lab_date(action.get("date")), None if str(sym).lower() in ("none", "null", "") else sym)
+    return run_action(action)
 
 
 async def _explore_next(city: str) -> None:

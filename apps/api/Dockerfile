@@ -1,4 +1,5 @@
-# Jarvis API. Render builds this from apps/api (see render.yaml).
+# Jarvis API. Built from the repo root (see render.yaml), so the Trading Lab in tradinglab/ is included.
+#   docker build -f apps/api/Dockerfile .
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -12,10 +13,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 
 # dependencies first, so code changes don't reinstall them
-COPY requirements.txt .
+COPY apps/api/requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY app ./app
+COPY apps/api/app ./app
+COPY tradinglab ./tradinglab
 
 # run as a non-root user
 RUN useradd --create-home jarvis

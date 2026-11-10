@@ -6,9 +6,13 @@ services:
     runtime: docker
     plan: free
     region: singapore
-    rootDir: apps/api
-    dockerfilePath: ./Dockerfile
+    # built from the repo root so the image also gets tradinglab/ (the Trading Lab)
+    dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
+    buildFilter:
+      paths:
+        - apps/api/**
+        - tradinglab/**
     healthCheckPath: /health
     autoDeploy: true
     envVars:
@@ -58,4 +62,13 @@ services:
         sync: false
       # letters, digits, _ and - only (Telegram rejects other characters): openssl rand -hex 24
       - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      # Trading Lab prices (Financial Modeling Prep): daily candles, and 1-minute candles
+      - key: INTRADAY_HISTORICAL_URL
+        value: https://financialmodelingprep.com/stable/historical-price-eod/full
+      - key: INTRADAY_HISTORICAL_API
+        sync: false
+      - key: INTRADAY_1MIN_URL
+        value: https://financialmodelingprep.com/stable/historical-chart/1min
+      - key: INTRADAY_1MIN_API
         sync: false

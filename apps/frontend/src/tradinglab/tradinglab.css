@@ -1,0 +1,112 @@
+/* Trading Lab page. Uses the app's tokens (styles.css); everything here is prefixed tl-. */
+:root {
+  --tl-up: #34d399;
+  --tl-down: #f87171;
+  --tl-down-text: #fca5a5;
+}
+
+.tl-up { color: var(--tl-up); }
+.tl-down { color: var(--tl-down-text); }
+.tl-asof { margin: -8px 0 0; }
+.tl-kpi { font-size: 26px; overflow-wrap: anywhere; }
+.tl-pad { margin: 12px 0 0; }
+.tl-wrap { white-space: normal !important; min-width: 180px; }
+
+.pill.tl-paper { background: var(--accent-soft); color: var(--accent); align-self: center; }
+
+/* start screen */
+.tl-stocklist { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 12px; margin-bottom: 18px; }
+.tl-stocklist > div { padding: 12px 14px; border-radius: 12px; background: var(--panel-2); display: flex; flex-direction: column; gap: 4px; }
+
+/* rules */
+.tl-rules { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.tl-rules div { display: grid; grid-template-columns: 96px 1fr; gap: 12px; }
+.tl-rules dt { font-weight: 600; }
+.tl-rules dd { margin: 0; color: var(--muted); }
+.tl-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-top: 18px; }
+.tl-form .field { flex: 1; min-width: 180px; max-width: 260px; }
+.tl-form input[type="date"] { color-scheme: dark; }
+.tl-restart { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+.tl-restart summary { cursor: pointer; color: var(--muted); min-height: 32px; display: flex; align-items: center; }
+.tl-restart summary:hover { color: var(--text); }
+
+/* day replay */
+.tl-day { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }
+.tl-facts { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 10px; }
+.tl-facts > div { padding: 12px 14px; border-radius: 12px; background: var(--panel-2); }
+.tl-facts dt { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.tl-facts dd { margin: 0; display: flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }
+.tl-row-on td { background: var(--accent-soft); }
+.tl-table tbody tr { cursor: default; }
+
+/* tables scroll sideways inside their card on a phone, never the page */
+.tl-table-wrap { overflow-x: auto; margin: 0 -8px; padding: 0 8px; }
+.tl-scroll { max-height: 420px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.tl-table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.tl-table th { text-align: left; font-weight: 500; color: var(--muted); font-size: 13px; padding: 0 12px 10px 0; white-space: nowrap; position: sticky; top: 0; background: var(--panel); }
+.tl-subhead th { font-size: 12px; padding-top: 0; }
+.tl-table td { padding: 10px 12px 10px 0; border-top: 1px solid var(--border); white-space: nowrap; }
+.tl-table td:first-child { font-weight: 500; }
+
+/* candle chart: trading-app colours, both kinds filled (up teal, down red) */
+:root { --tl-candle-up: #26a69a; --tl-candle-down: #ef5350; }
+.tl-chart-wrap { display: flex; flex-direction: column; gap: 10px; }
+.tl-chart-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.tl-seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--border); }
+.tl-seg button { min-width: 36px; height: 30px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 13px; transition: background .15s, color .15s; }
+.tl-seg button:hover:not(:disabled) { color: var(--text); background: rgba(255, 255, 255, .05); }
+.tl-seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.tl-seg button:disabled { opacity: .35; cursor: default; }
+.tl-hint { margin-left: auto; }
+.tl-chart { position: relative; width: 100%; min-height: 440px; border-radius: 12px; outline-offset: 4px; }
+.tl-chart svg { display: block; touch-action: none; user-select: none; }
+.tl-grab { cursor: grab; }
+.tl-grabbing { cursor: grabbing; }
+.tl-grid { stroke: var(--border); stroke-width: 1; }
+.tl-axis { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.tl-cross { stroke: var(--border-strong); stroke-width: 1; }
+.tl-range { fill: var(--accent); opacity: .06; }
+.tl-range-line { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 4; opacity: .5; }
+.tl-candle-up line, .tl-candle-up rect { stroke: var(--tl-candle-up); fill: var(--tl-candle-up); }
+.tl-candle-down line, .tl-candle-down rect { stroke: var(--tl-candle-down); fill: var(--tl-candle-down); }
+.tl-candle-up line, .tl-candle-down line { stroke-width: 1.2; }
+.tl-vol-up { fill: var(--tl-candle-up); opacity: .45; }
+.tl-vol-down { fill: var(--tl-candle-down); opacity: .45; }
+.tl-entry-line { stroke: var(--text); stroke-width: 1; stroke-dasharray: 2 3; opacity: .45; }
+.tl-path-win, .tl-path-loss { stroke-width: 2; opacity: .85; }
+.tl-path-win { stroke: var(--tl-up); }
+.tl-path-loss { stroke: var(--tl-down); }
+.tl-marker circle { stroke: var(--panel); stroke-width: 2; }
+.tl-marker path { stroke: var(--panel); stroke-width: 1.5; }
+.tl-marker text { font-size: 12px; font-weight: 600; fill: var(--text); paint-order: stroke; stroke: var(--panel); stroke-width: 4px; }
+.tl-marker-buy circle, .tl-marker-buy path { fill: var(--accent); }
+.tl-marker-sell circle, .tl-marker-sell path { fill: #f5a524; }
+@media (max-width: 800px) { .tl-hint { display: none; } }
+.tl-tip { position: absolute; transform: translateX(-50%); pointer-events: none; padding: 8px 12px; border-radius: 10px; z-index: 1;
+  background: var(--panel-2); border: 1px solid var(--border-strong); white-space: nowrap; font-size: 14px; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); }
+.tl-ohlc { display: flex; gap: 10px; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 800px) {
+  .tl-kpi { font-size: 22px; }
+  .tl-rules div { grid-template-columns: 1fr; gap: 2px; }
+}
+
+/* the page's own header actions stay visible on phones (the app hides .head-actions there) */
+.tl-head-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+/* day replay: the day and stock pickers sit in the card's header row, and wrap under the title on phones */
+.tl-day-head { flex-wrap: wrap; margin-bottom: 6px; }
+.tl-pickers { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.tl-pick { min-width: 0; }
+.tl-pick .input { height: 40px; }
+.tl-pick select.input { min-width: 210px; }
+.tl-date { display: flex; align-items: center; gap: 6px; }
+.tl-date .input { color-scheme: dark; width: 160px; flex: none; }
+.tl-step { width: 36px; height: 40px; font-size: 20px; flex: none; border: 1px solid var(--border-strong); }
+.tl-step:disabled { opacity: .35; cursor: default; }
+.tl-note { margin: 0 0 12px; }
+@media (max-width: 800px) {
+  .tl-pickers, .tl-pick { width: 100%; }
+  .tl-pick select.input { width: 100%; }
+  .tl-date .input { flex: 1; width: auto; }
+}

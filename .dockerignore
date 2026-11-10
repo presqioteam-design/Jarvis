@@ -1,0 +1,10 @@
+# The API image is built from the repo root (apps/api/Dockerfile) but only needs
+# apps/api and tradinglab; keep everything else (and every secret) out of the build.
+**
+!apps/api/requirements.txt
+!apps/api/app/**
+!tradinglab/**
+**/__pycache__
+**/*.pyc
+**/.env
+**/.env.*

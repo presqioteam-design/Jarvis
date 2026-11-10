@@ -10,7 +10,8 @@
   "scripts": {
     "ui:dev": "yarn workspace frontend dev",
     "ui:build": "yarn workspace frontend build",
-    "api:dev": "cd apps/api && .venv/bin/uvicorn app.main:app --reload --port 8000",
+    "api:dev": "cd apps/api && PYTHONPATH=../.. .venv/bin/uvicorn app.main:app --reload --reload-dir . --reload-dir ../../tradinglab --port 8000",
+    "lab": "apps/api/.venv/bin/python -m tradinglab",
     "cron:dev": "yarn workspace cron dev",
     "cron:deploy": "yarn workspace cron deploy",
     "typecheck": "yarn workspaces run typecheck"
