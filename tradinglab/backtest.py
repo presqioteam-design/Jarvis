@@ -104,7 +104,14 @@ def run(start: str, end: str) -> dict:
     split = {k: {"first": f"{traded[k][0]} to {traded[k][len(traded[k]) * 2 // 3 - 1]}",
                  "last": f"{traded[k][len(traded[k]) * 2 // 3]} to {traded[k][-1]}"} for k in MARKETS if traded[k]}
     return {"from": start, "to": end, "split": split, "sessions": {k: len(v) for k, v in traded.items()}, "variants": results,
-            "best": {k: max(results, key=lambda r: (r["markets"][k]["beatsCurrentInBoth"], r["markets"][k]["all"]["pnl"]))["key"] for k in MARKETS}}
+            "best": {k: max(results, key=lambda r: _steadiness(r["markets"][k]))["key"] for k in MARKETS}}
+
+
+def _steadiness(m: dict) -> tuple:
+    """Prefer rules that made money in both parts of the period, then the better of their weaker part:
+    a rule that only shines in one stretch is more likely luck."""
+    first, last = m["first"]["pnl"], m["last"]["pnl"]
+    return (first > 0 and last > 0, min(first, last), m["all"]["pnl"])
 
 
 def show(res: dict) -> None:
