@@ -407,16 +407,23 @@ async def day_text(day: str | None, symbol: str | None = None) -> str:
     rows = [s for s in out["stocks"] if not symbol or s["symbol"].upper() == symbol.upper()]
     if not rows:
         return f"No {symbol.upper()} on {day}. The stocks are " + ", ".join(s for m in MARKETS.values() for s in m.stocks) + "."
-    lines = [f"Trading Lab, {day}:"]
+    lines = [f"Trading Lab, {day}" + (" (live, trading now; prices from the last check):" if out.get("live") else ":")]
     for s in rows:
         if s.get("error"):
             lines.append(f"- {s['symbol']}: prices unavailable ({s['error']})")
+        elif s["trade"] and s["trade"].get("open"):   # today, still held
+            t, c = s["trade"], s["currency"]
+            lines.append(f"- {s['symbol']}: HOLDING. Bought {t['buyTime']} at {t['buyPrice']:,.2f} ({t['reason']}); "
+                         f"now {t['last']:,.2f} at {t['lastTime']}, {_cur(c, t['pnl'], True)} so far ({t['pnlPct']:+.2f}%); "
+                         f"sells if it falls to {t['stop']:,.2f}{' (trailing stop)' if t.get('trailing') else ''} or at the close")
         elif s["trade"]:
             t, c = s["trade"], s["currency"]
             lines.append(f"- {s['symbol']}: bought {t['buyTime']} at {t['buyPrice']:,.2f} ({t['reason']}); "
                          f"sold {t['sellTime']} at {t['sellPrice']:,.2f} ({t['exit']}); {_cur(c, t['pnl'], True)} ({t['pnlPct']:+.2f}%)")
         else:
-            lines.append(f"- {s['symbol']}: no trade. {s['note']}.")
+            last = s["candles"][-1] if s.get("candles") else None
+            now = f" Price now {last['close']:,.2f} at {last['time']}." if s.get("live") and last else ""
+            lines.append(f"- {s['symbol']}: no trade yet. {s['note']}.{now}" if s.get("live") else f"- {s['symbol']}: no trade. {s['note']}.")
     return "\n".join(lines)
 
 
