@@ -13,7 +13,9 @@ const JOBS: Record<string, string> = {
   "*/30 4-14 * * MON-SAT": "/jobs/tick",   // every 30 min, 9:30 AM–8 PM IST: auto-send in its hours, else check replies
   "30 13 * * MON-SAT": "/jobs/daily-report",        // 7 PM IST
   "*/30 19-23 * * *": "/jobs/explore",              // every 30 min, 12:30–5:00 AM IST: the night explorer
-  "30 2 * * TUE-SAT": "/tradinglab/job",            // 8 AM IST: Trading Lab replays with yesterday's prices
+  "30 2 * * TUE-SAT": "/tradinglab/job",            // 8 AM IST: Trading Lab catches up on anything missed
+  "*/5 3-10,13-21 * * MON-FRI": "/tradinglab/live", // every 5 min around NSE and US hours; the API only asks
+                                                    // for prices while a market is actually open
 };
 
 async function runJob(env: Env, path: string): Promise<void> {

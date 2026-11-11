@@ -110,3 +110,20 @@
   .tl-pick select.input { width: 100%; }
   .tl-date .input { flex: 1; width: auto; }
 }
+
+/* live now */
+.tl-stop-line { stroke: #f5a524; stroke-width: 1; stroke-dasharray: 5 4; opacity: .8; }
+.tl-now-dot { fill: var(--text); stroke: var(--panel); stroke-width: 2; animation: tl-pulse 1.6s ease-in-out infinite; }
+@keyframes tl-pulse { 50% { opacity: .35; } }
+.tl-live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--tl-up); margin-right: 6px; animation: tl-pulse 1.6s ease-in-out infinite; }
+.tl-live-markets { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 14px; }
+.tl-live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr)); gap: 10px; margin-bottom: 16px; }
+.tl-live-stock { text-align: left; padding: 12px 14px; border-radius: 12px; background: var(--panel-2); border: 1px solid transparent; color: var(--text);
+  cursor: pointer; font: inherit; display: flex; flex-direction: column; gap: 4px; transition: border-color .15s; }
+.tl-live-stock:hover { border-color: var(--border-strong); }
+.tl-live-stock.on { border-color: var(--accent); }
+.tl-live-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.pill.tl-st-holding { background: rgba(56, 189, 248, .14); color: var(--accent); }
+.pill.tl-st-sold { background: rgba(52, 211, 153, .14); color: var(--tl-up); }
+.pill.tl-st-watching, .pill.tl-st-range { background: rgba(245, 165, 36, .12); color: var(--c-interested); }
+@media (prefers-reduced-motion: reduce) { .tl-now-dot, .tl-live-dot { animation: none; } }

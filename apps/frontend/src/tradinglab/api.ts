@@ -22,10 +22,19 @@ type Base = { rules: Rules; markets: Record<MarketKey, MarketInfo>; configured: 
 export type LabView = (Base & { started: false }) | (Base & { started: true; config: Config; days: DayRecord[] });
 
 export type Candle = { time: string; open: number; high: number; low: number; close: number; volume: number };
+/** A trade. While it's still held (today, live), sellTime/sellPrice are null and open/last/stop say where it stands. */
 export type Trade = {
-  buyTime: string; buyPrice: number; qty: number; sellTime: string; sellPrice: number; best: number;
+  buyTime: string; buyPrice: number; qty: number; sellTime: string | null; sellPrice: number | null; best: number;
   charges: number; pnl: number; pnlPct: number; reason: string; exit: string;
+  open?: boolean; last?: number; lastTime?: string; stop?: number; trailing?: boolean;
 };
+export type LiveState = "range" | "watching" | "holding" | "sold" | "no_trade";
+export type LiveStock = { state: LiveState; note: string; pnl: number; price: number | null; time: string | null; done: boolean; trade: Trade | null };
+export type LiveMarket = {
+  open: boolean; nextOpen: string; day: string;
+  state: { day: string; checkedAt?: string; holiday: boolean; stopped: string; stocks: Record<string, LiveStock> } | null;
+};
+export type LiveView = { markets: Record<MarketKey, LiveMarket> };
 export type StockReplay =
   | { symbol: string; market: MarketKey; currency: Currency; candles: Candle[]; range: { high: number; low: number; until: string } | null;
       trade: Trade | null; note: string; pnl: number; potStart: number; error?: undefined }
@@ -36,6 +45,7 @@ export const getLab = () => call<LabView>("/tradinglab");
 export const startLab = (startDate: string) => call<LabView>("/tradinglab/start", { startDate });
 export const refreshLab = () => call<LabView>("/tradinglab/refresh", {});
 export const getDay = (date: string) => call<DayReplay>(`/tradinglab/day/${date}`);
+export const getLive = () => call<LiveView>("/tradinglab/live");
 
 /** True when the stock's day loaded (it has candles), false when the server sent an error instead. */
 export const loaded = (s: StockReplay): s is Extract<StockReplay, { candles: Candle[] }> => "candles" in s;

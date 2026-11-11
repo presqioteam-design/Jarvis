@@ -24,17 +24,23 @@ def _r(x: float, digits: int = 2) -> float:
     return round(x, digits)
 
 
-def simulate_day(market: str, candles: list[dict], pot: float, rules: Rules = RULES) -> dict:
-    """-> {"range", "trade" (or None), "note", "pnl", "withdrawn", "potStart", "potEnd"} for one session."""
+def simulate_day(market: str, candles: list[dict], pot: float, rules: Rules = RULES, live: bool = False) -> dict:
+    """-> {"range", "trade" (or None), "note", "pnl", "withdrawn", "potStart", "potEnd", "state"} for one session.
+    `live`: the session is still going, so candles stop at "now". A position with no sell yet is still
+    held (state "holding"), and no breakout yet only means "watching", not "no trade".
+    state: "range" (first minutes), "watching", "holding", "sold", "no_trade", "closed"."""
     m = MARKETS[market]
-    out = {"range": None, "trade": None, "note": "", "pnl": 0.0, "withdrawn": 0.0, "potStart": _r(pot), "potEnd": _r(pot)}
+    out = {"range": None, "trade": None, "note": "", "pnl": 0.0, "withdrawn": 0.0, "potStart": _r(pot), "potEnd": _r(pot), "state": "no_trade"}
     if not candles:
-        out["note"] = "No trading that day"
+        out["note"], out["state"] = ("Waiting for the first prices", "range") if live else ("No trading that day", "closed")
         return out
     range_end = _shift(m.open, rules.range_minutes)
     last_entry = _shift(m.close, -rules.no_entry_last_minutes)
     exit_at = _shift(m.close, -rules.exit_before_close_minutes)
     opening = [c for c in candles if _t(c) < range_end]
+    if live and _t(candles[-1]) < range_end:
+        out["note"], out["state"] = f"Setting the opening range until {range_end}", "range"
+        return out
     if len(opening) < rules.range_minutes // 3:
         out["note"] = "Too few prices in the first minutes to set an opening range"
         return out
@@ -51,6 +57,9 @@ def simulate_day(market: str, candles: list[dict], pot: float, rules: Rules = RU
             entry_i = i + 1
             break
     if entry_i is None:
+        if live and (not rest or _t(rest[-1]) < last_entry):   # still time for a breakout today
+            out["note"], out["state"] = f"Watching for a close above {hi:,.2f} (buys until {last_entry})", "watching"
+            return out
         out["note"] = f"No breakout: the price never closed above the opening-range high of {hi:,.2f} before {last_entry}"
         return out
 
@@ -80,6 +89,17 @@ def simulate_day(market: str, candles: list[dict], pot: float, rules: Rules = RU
         if best >= price * (1 + rules.trail_after_pct / 100):
             trailing = True
             stop = max(stop, best * (1 - rules.trail_pct / 100))
+    if exit_c is None and live:   # still holding: show where it stands now
+        last = rest[-1]["close"]
+        value = qty * last - charges(market, "sell", qty * last, qty, rules)
+        out.update(pnl=_r(value - pot), state="holding", note=f"Holding; sells at {stop:,.2f} or {exit_at}")
+        out["trade"] = {
+            "buyTime": _t(e), "buyPrice": _r(price, 4), "qty": _r(qty, 4), "sellTime": None, "sellPrice": None,
+            "best": _r(best, 4), "charges": _r(buy_fee), "pnl": _r(value - pot), "pnlPct": _r((value - pot) / pot * 100),
+            "reason": f"closed {rest[entry_i - 1]['close']:,.2f} at {_t(rest[entry_i - 1])}, above the opening-range high of {hi:,.2f}",
+            "exit": "", "open": True, "last": last, "lastTime": _t(rest[-1]), "stop": _r(stop, 4), "trailing": trailing,
+        }
+        return out
     if exit_c is None:   # the data ended before the exit time (a short session)
         exit_c, exit_price, why = rest[-1], rest[-1]["close"], "sold at the last price of the day"
 
@@ -87,7 +107,7 @@ def simulate_day(market: str, candles: list[dict], pot: float, rules: Rules = RU
     proceeds = qty * exit_price - sell_fee
     pnl = proceeds - pot
     withdrawn = max(pnl, 0.0)
-    out.update(pnl=_r(pnl), withdrawn=_r(withdrawn), potEnd=_r(pot + min(pnl, 0.0)), note=why)
+    out.update(pnl=_r(pnl), withdrawn=_r(withdrawn), potEnd=_r(pot + min(pnl, 0.0)), note=why, state="sold")
     out["trade"] = {
         "buyTime": _t(e), "buyPrice": _r(price, 4), "qty": _r(qty, 4), "sellTime": _t(exit_c), "sellPrice": _r(exit_price, 4),
         "best": _r(best, 4), "charges": _r(buy_fee + sell_fee), "pnl": _r(pnl), "pnlPct": _r(pnl / pot * 100),

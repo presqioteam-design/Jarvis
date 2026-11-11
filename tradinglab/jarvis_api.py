@@ -21,7 +21,7 @@ from app.firebase import col, db
 from app.services import keepalive, telegram
 from app.timeutil import now_utc
 
-from . import data
+from . import data, live
 from .engine import candles_every, simulate_day
 from .lab import last_closed_session, newest_available, replay_day, weekdays
 from .rules import MARKETS, RULES
@@ -186,10 +186,12 @@ async def refresh() -> dict:
 
 
 async def _replay(day: str) -> dict | None:
-    """One stored day replayed: every stock's 1-minute candles, opening range and trade. None if not replayed."""
+    """One day replayed: every stock's 1-minute candles, opening range and trade. A stored day replays from its
+    pots; today, while a market is trading, replays the candles so far (the last live check's, so no new request).
+    None if neither."""
     snap = col("tradinglab_days").document(day).get()
     if not snap.exists:
-        return None
+        return await _replay_live(day)
     stocks = snap.to_dict().get("stocks", {})
 
     async def one(symbol: str, saved: dict) -> dict:
@@ -204,6 +206,79 @@ async def _replay(day: str) -> dict | None:
 
     order = [s for m in MARKETS.values() for s in m.stocks if s in stocks]
     return {"date": day, "stocks": await asyncio.gather(*(one(s, stocks[s]) for s in order))}
+
+
+async def _replay_live(day: str) -> dict | None:
+    cfg = _config()
+    keys = [k for k in MARKETS if live.session_date(k) == day and (_live_state(k) or {}).get("day") == day]
+    if not cfg or not keys:
+        return None
+
+    async def one(symbol: str, key: str) -> dict:
+        candles = live.candles_today(symbol)
+        if candles is None:   # the server restarted since the last check
+            try:
+                candles = await data.day(symbol, day, finished=False)
+            except data.DataError as e:
+                return {"symbol": symbol, "market": key, "error": str(e)}
+        pot = cfg["pots"][key].get(symbol, RULES.pot)
+        r = simulate_day(key, candles, pot, live=True)
+        return {"symbol": symbol, "market": key, "currency": MARKETS[key].currency, "candles": candles_every(candles, 1),
+                "range": r["range"], "trade": r["trade"], "note": r["note"], "pnl": r["pnl"], "potStart": pot,
+                "state": r["state"], "live": True}
+
+    return {"date": day, "live": True,
+            "stocks": await asyncio.gather(*(one(s, k) for k in keys for s in MARKETS[k].stocks))}
+
+
+# ── live paper trading during market hours ───────────────────────────────────
+
+def _live_ref(key: str):
+    return col("tradinglab").document(f"live_{key}")
+
+
+def _live_state(key: str) -> dict | None:
+    snap = _live_ref(key).get()
+    return snap.to_dict() if snap.exists else None
+
+
+@router.post("/live", dependencies=[Depends(require_cron)])
+async def live_tick() -> dict:
+    """Cron, every 5 minutes on weekdays. Checks only markets that are open right now; just after a close
+    it saves that session's money. Outside trading hours it returns without asking FMP for anything."""
+    cfg = _config()
+    if not cfg:
+        return {"ok": True, "lab": "not started"}
+    out, lines = {}, []
+    for key, m in MARKETS.items():
+        if live.is_open(key):
+            state, said = await live.check(key, _live_state(key) or {}, cfg["pots"][key])
+            _live_ref(key).set(state)
+            lines += said
+            out[key] = "holiday" if state.get("holiday") else f"checked {state.get('checkedAt', '')}"
+        elif (cfg["progress"].get(key) or "") < last_closed_session(key) and live.market_now(key).weekday() < 5 \
+                and live.market_now(key).strftime("%H:%M") >= m.close:
+            out[key] = "closed: saving today" if _kick(notify=True) else "closed: already saving"
+        else:
+            out[key] = "closed"
+    if lines:
+        try:
+            await telegram.send("📈 Trading Lab, live (paper money)\n" + "\n".join(lines))
+        except Exception:
+            log.exception("Couldn't send the Trading Lab live update")
+    return {"ok": True, **out}
+
+
+@router.get("/live", dependencies=[Depends(require_user)])
+async def live_view() -> dict:
+    """What's happening now, from the last check: no request to FMP, two small reads."""
+    out = {}
+    for key, m in MARKETS.items():
+        state = _live_state(key) or {}
+        today = live.session_date(key)
+        out[key] = {"open": live.is_open(key), "nextOpen": live.next_open(key), "day": today,
+                    "state": state if state.get("day") == today else None}
+    return {"markets": out}
 
 
 @router.get("/day/{day}", dependencies=[Depends(require_user)])
@@ -243,7 +318,15 @@ def briefing() -> str:
             parts.append(f"{MARKETS[k].name} {_cur(md['currency'], md['pnl'], True)} ({md['trades']} trades: "
                          + (", ".join(f"{s} {_cur(md['currency'], d['stocks'][s]['pnl'], True)}" for s in winners) or "none") + ")")
         lines.append(f"- {d['date']}: " + "; ".join(parts))
-    lines.append("For trade times and reasons on a day, use the command 'lab day <YYYY-MM-DD> [stock]'.")
+    for k, m in MARKETS.items():   # what's happening right now, from the last live check (no request)
+        st = _live_state(k) or {}
+        if live.is_open(k) and st.get("day") == live.session_date(k) and st.get("stocks"):
+            now = "; ".join(f"{s} {r['state'].replace('_', ' ')}" + (f" {_cur(m.currency, r['pnl'], True)}" if r["trade"] else "")
+                            for s, r in st["stocks"].items())
+            lines.append(f"- LIVE NOW, {m.name} (checked {st.get('checkedAt')} exchange time): {now}")
+        elif live.is_open(k) and st.get("holiday"):
+            lines.append(f"- LIVE NOW, {m.name}: market holiday today")
+    lines.append("For trade times and reasons on a day, use the command 'lab day <YYYY-MM-DD> [stock]' (today works while trading).")
     return "\n".join(lines)
 
 

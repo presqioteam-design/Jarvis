@@ -176,7 +176,9 @@ export default function CandleChart({ candles, range, trade, currency, symbol }:
     return k;
   };
   const buyI = trade ? slotIndex(trade.buyTime) : -1;
-  const sellI = trade ? slotIndex(trade.sellTime) : -1;
+  // a trade still held (today, live) runs to the latest candle at the latest price
+  const sellI = trade ? slotIndex(trade.sellTime ?? trade.lastTime ?? bars[n - 1]?.time ?? "00:00") : -1;
+  const sellPrice = trade ? (trade.sellPrice ?? trade.last ?? trade.buyPrice) : 0;
   const fitTrade = () => {
     if (buyI < 0 || sellI < 0) return;
     const margin = Math.max(6, (sellI - buyI) * 0.35);
@@ -189,7 +191,9 @@ export default function CandleChart({ candles, range, trade, currency, symbol }:
   const i0 = Math.max(0, Math.floor(view.a)), i1 = Math.min(n - 1, Math.ceil(view.b) - 1);
   const shown = bars.slice(i0, i1 + 1);
   let lo = Math.min(...shown.map((c) => c.low)), hi = Math.max(...shown.map((c) => c.high));
-  if (trade && buyI <= i1 && sellI >= i0) { lo = Math.min(lo, trade.buyPrice, trade.sellPrice); hi = Math.max(hi, trade.buyPrice, trade.sellPrice); }
+  if (trade && buyI <= i1 && sellI >= i0) {
+    lo = Math.min(lo, trade.buyPrice, sellPrice, trade.stop ?? Infinity); hi = Math.max(hi, trade.buyPrice, sellPrice);
+  }
   const pad = (hi - lo) * 0.1 || hi * 0.002;
   lo -= pad; hi += pad;
   const y = (v: number) => PAD.top + (1 - (v - lo) / (hi - lo)) * h;
@@ -228,7 +232,7 @@ export default function CandleChart({ candles, range, trade, currency, symbol }:
         aria-label={`${symbol} chart. Plus and minus zoom, arrow keys move, 0 shows the whole day.`}>
         {width > 0 && (
           <svg width={width} height={H} role="img"
-            aria-label={trade ? `${symbol}: bought at ${trade.buyTime} for ${price(trade.buyPrice)}, sold at ${trade.sellTime} for ${price(trade.sellPrice)}` : `${symbol}: no trade`}>
+            aria-label={trade ? `${symbol}: bought at ${trade.buyTime} for ${price(trade.buyPrice)}, ${trade.sellTime ? `sold at ${trade.sellTime} for ${price(sellPrice)}` : `holding, now ${price(sellPrice)}`}` : `${symbol}: no trade`}>
             <defs>
               <clipPath id={`tl-clip-${symbol}`}><rect x={PAD.left} y={0} width={w} height={H} /></clipPath>
             </defs>
@@ -273,9 +277,21 @@ export default function CandleChart({ candles, range, trade, currency, symbol }:
               {trade && buyI >= 0 && sellI >= 0 && (
                 <g>
                   <line x1={px(buyI)} x2={px(sellI)} y1={y(trade.buyPrice)} y2={y(trade.buyPrice)} className="tl-entry-line" />
-                  <line x1={px(buyI)} x2={px(sellI)} y1={y(trade.buyPrice)} y2={y(trade.sellPrice)} className={won ? "tl-path-win" : "tl-path-loss"} />
+                  <line x1={px(buyI)} x2={px(sellI)} y1={y(trade.buyPrice)} y2={y(sellPrice)} className={won ? "tl-path-win" : "tl-path-loss"} />
+                  {trade.open && trade.stop && (
+                    <g>
+                      <line x1={px(buyI)} x2={PAD.left + w} y1={y(trade.stop)} y2={y(trade.stop)} className="tl-stop-line" />
+                      <text x={PAD.left + w - 4} y={y(trade.stop) + 14} className="tl-axis" textAnchor="end">
+                        {trade.trailing ? "Trailing stop" : "Stop"} {price(trade.stop)}
+                      </text>
+                    </g>
+                  )}
                   <Marker x={px(buyI)} y={y(trade.buyPrice)} kind="buy" label={`Buy ${trade.buyTime} · ${price(trade.buyPrice)}`} left={PAD.left} right={PAD.left + w} />
-                  <Marker x={px(sellI)} y={y(trade.sellPrice)} kind="sell" label={`Sell ${trade.sellTime} · ${price(trade.sellPrice)}`} left={PAD.left} right={PAD.left + w} />
+                  {trade.sellTime ? (
+                    <Marker x={px(sellI)} y={y(sellPrice)} kind="sell" label={`Sell ${trade.sellTime} · ${price(sellPrice)}`} left={PAD.left} right={PAD.left + w} />
+                  ) : (
+                    <circle cx={px(sellI)} cy={y(sellPrice)} r={4} className="tl-now-dot" />
+                  )}
                 </g>
               )}
               {c && hover !== null && <line x1={px(hover)} x2={px(hover)} y1={PAD.top} y2={plotBottom} className="tl-cross" />}

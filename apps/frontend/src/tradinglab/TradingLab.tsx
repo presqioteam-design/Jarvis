@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { errorText } from "../lib/api";
 import Icon, { type IconName } from "../components/Icon";
 import CandleChart from "./CandleChart";
+import LiveCard from "./LiveCard";
 import { getDay, getLab, loaded, refreshLab, startLab, type DayReplay, type LabView, type MarketKey, type Rules } from "./api";
 import { money, price, shortDate, signed, tone } from "./format";
 import "./tradinglab.css";
@@ -123,6 +124,8 @@ function Running({ lab, busy, onRestart }: { lab: Started; busy: boolean; onRest
         <Kpi icon="bolt" label="Trades" value={String(totalTrades)}
           note={totalTrades ? `${totalWins} won (${Math.round((totalWins / totalTrades) * 100)}%) over ${days.length} day${days.length === 1 ? "" : "s"}` : "None yet"} />
       </section>
+
+      <LiveCard lab={lab} />
 
       {days.length === 0 ? (
         <section className="card">
@@ -269,7 +272,7 @@ function DayCard({ days, date, onPick, note, lab, symbol, setSymbol }: {
                 <dl className="tl-facts">
                   <div><dt>Bought</dt><dd>{sel.trade.buyTime} at {price(sel.trade.buyPrice)}<span className="muted small">{sel.trade.qty} shares for {money(sel.potStart, sel.currency)}</span></dd></div>
                   <div><dt>Why</dt><dd className="muted">{sel.trade.reason}</dd></div>
-                  <div><dt>Sold</dt><dd>{sel.trade.sellTime} at {price(sel.trade.sellPrice)}<span className="muted small">{sel.trade.exit}</span></dd></div>
+                  <div><dt>Sold</dt><dd>{sel.trade.sellTime} at {price(sel.trade.sellPrice ?? 0)}<span className="muted small">{sel.trade.exit}</span></dd></div>
                   <div><dt>Result</dt><dd className={tone(sel.trade.pnl)}>{signed(sel.trade.pnl, sel.currency)} ({signed(sel.trade.pnlPct, "%")})<span className="muted small">after {money(sel.trade.charges, sel.currency)} charges · best price {price(sel.trade.best)}</span></dd></div>
                 </dl>
               ) : <p className="muted tl-pad">{sel.note}.</p>}
@@ -288,7 +291,7 @@ function DayCard({ days, date, onPick, note, lab, symbol, setSymbol }: {
                     {s.trade ? (
                       <>
                         <td>{s.trade.buyTime} · {price(s.trade.buyPrice)}</td>
-                        <td>{s.trade.sellTime} · {price(s.trade.sellPrice)}</td>
+                        <td>{s.trade.sellTime ?? "holding"}{s.trade.sellPrice !== null && ` · ${price(s.trade.sellPrice)}`}</td>
                         <td className="muted tl-wrap">{s.trade.exit}</td>
                         <td className={tone(s.pnl)}>{signed(s.pnl, s.currency)}</td>
                       </>

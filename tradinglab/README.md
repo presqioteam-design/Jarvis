@@ -15,10 +15,16 @@ Each stock has its own pot of ₹1,000 or $1,000. Profit is withdrawn after a wi
 the pot. Broker charges and taxes are taken. Shares can be fractional so every pot can trade.
 
 ## How it runs
-Your FMP plan delivers NSE candles after the day ends, so each session is **replayed once it's
-over**, minute by minute as if live, without looking ahead. The cron runs at 8 AM IST (Tue–Sat):
-by then the previous NSE day and the US night session have finished. "Check for new days" on
-the page does the same on demand.
+- **Live, during market hours.** A cron ping every 5 minutes on weekdays calls `/tradinglab/live`. The API
+  checks each exchange's own clock (NSE 09:15–15:30 IST, US 09:30–16:00 New York time) and asks FMP for
+  prices **only while that market is open**. Each check replays today's 1-minute candles so far with the
+  same rules, so buys and sells happen on the exact minute; Telegram hears about each one within 5 minutes.
+  A stock that has sold, or can't buy any more today, isn't asked for again; a market with no candles
+  10 minutes after its open is treated as a holiday and skipped for the day.
+- **Right after each close** the session is replayed in full and its money saved.
+- **8 AM IST** (Tue–Sat) a catch-up job saves any session the live checks missed.
+- Requests: at most 5 per market per 5-minute check, fewer as stocks finish, so roughly 400–800 on a day
+  when both markets trade. Nothing at all on weekends, holidays or outside trading hours.
 
 ## Files
 | File | What it does |
@@ -27,6 +33,7 @@ the page does the same on demand.
 | `data.py` | 1-minute candles from Financial Modeling Prep (one stock-day per request, cached) |
 | `engine.py` | One stock, one session: the opening range, the trade, the result |
 | `lab.py` | Which sessions are finished; replaying a market's day |
+| `live.py` | Live checks while a market is open |
 | `__main__.py` | Terminal: `yarn lab --from 2026-11-03` |
 | `jarvis_api.py` | The only Jarvis hook: `/tradinglab` routes, the 8 AM job, Firestore, Telegram |
 
