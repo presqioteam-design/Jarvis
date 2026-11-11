@@ -25,3 +25,6 @@ apps/agent/state.json
 .vscode/
 .idea/
 *.tsbuildinfo
+
+# Trading Lab strategy tester: downloaded candles stay on this computer
+tradinglab/.cache/

@@ -28,6 +28,15 @@ class Rules:
     no_entry_last_minutes: int = 60  # no new buys this close to the close
     exit_before_close_minutes: int = 15
     charges: bool = True
+    # optional extra intelligence (all off by default; the strategy tester compares them)
+    min_volume_mult: float = 0.0     # buy only if the breakout minute's volume is this many times the day's average so far
+    above_vwap: bool = False         # buy only above VWAP (the day's volume-weighted average price)
+    market_up: bool = False          # buy only while the market (NIFTYBEES / SPY) is above its opening price
+    latest_entry: str = ""           # "HH:MM": no new buys after this time
+    max_gap_pct: float = 0.0         # skip a stock that opened more than this far from yesterday's close
+    breakeven_at_pct: float = 0.0    # once up this much, the stop moves to the buy price (that trade can't lose much)
+    trail_atr_mult: float = 0.0      # trailing stop at least this many ATRs (a stock's usual 1-minute move) behind the best
+    max_losses_per_day: int = 0      # stop buying in a market after this many losing trades that day
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -46,13 +55,15 @@ class Market:
     close: str
     suffix: str          # symbol suffix on Financial Modeling Prep
     stocks: tuple[str, ...]
+    benchmark: str       # an ETF that tracks the market (the indices themselves aren't on the FMP plan)
 
 
 MARKETS = {
-    "IN": Market("IN", "India (NSE)", "INR", "Asia/Kolkata", "09:15", "15:30", ".NS", ("RELIANCE", "HDFCBANK", "INFY", "TCS", "ITC")),
-    "US": Market("US", "United States", "USD", "America/New_York", "09:30", "16:00", "", ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL")),
+    "IN": Market("IN", "India (NSE)", "INR", "Asia/Kolkata", "09:15", "15:30", ".NS", ("RELIANCE", "HDFCBANK", "INFY", "TCS", "ITC"), "NIFTYBEES"),
+    "US": Market("US", "United States", "USD", "America/New_York", "09:30", "16:00", "", ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL"), "SPY"),
 }
 STOCKS = {s: m for m in MARKETS.values() for s in m.stocks}   # symbol -> its market
+SYMBOLS = {**STOCKS, **{m.benchmark: m for m in MARKETS.values()}}   # stocks and benchmarks, for fetching prices
 
 
 def charges(market: str, side: str, value: float, qty: float, rules: Rules = RULES) -> float:

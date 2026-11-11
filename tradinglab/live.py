@@ -20,6 +20,7 @@ from .engine import simulate_day
 from .rules import MARKETS, RULES
 
 HOLIDAY_AFTER_MINUTES = 10
+BUSY_PAUSE_MINUTES = 10              # FMP said "too many requests": wait this long before asking again
 ONE_STOCK_EVERY_S = 55               # the stock on screen is fetched at most this often
 _today: dict[str, list[dict]] = {}   # symbol -> today's candles from the last check (for the chart)
 _fetched_at: dict[str, float] = {}   # symbol -> when its candles were last fetched (monotonic)
@@ -51,6 +52,31 @@ def next_open(key: str) -> str:
     return f"{d.strftime('%a %d %b')} {m.open}"
 
 
+def _paused(state: dict) -> bool:
+    return bool(state.get("pausedUntil")) and datetime.now().astimezone().isoformat() < state["pausedUntil"]
+
+
+def _first_refusal(state: dict, e: "data.DataError") -> bool:
+    """Tell Telegram once per kind of refusal per day, not on every check."""
+    return state.get("refusedAs") != ("busy" if e.busy else "stop")
+
+
+def _refused(key: str, state: dict, e: "data.DataError") -> dict:
+    """"Too many requests" pauses this market for a few minutes; anything else stops it for the day."""
+    if e.busy:
+        state["pausedUntil"] = (datetime.now().astimezone() + timedelta(minutes=BUSY_PAUSE_MINUTES)).isoformat()
+    else:
+        state["stopped"] = str(e)
+    state["refusedAs"] = "busy" if e.busy else "stop"
+    return state
+
+
+def _refused_line(key: str, state: dict, e: "data.DataError") -> str:
+    name = MARKETS[key].name
+    return (f"⏸ {name} live checks paused for {BUSY_PAUSE_MINUTES} min: {e}. They carry on by themselves." if e.busy
+            else f"⏸ {name} live checks stopped for today: {e}")
+
+
 def candles_today(symbol: str) -> list[dict] | None:
     return _today.get(symbol)
 
@@ -68,7 +94,7 @@ async def check(key: str, state: dict, pots: dict[str, float]) -> tuple[dict, li
     day = session_date(key)
     if state.get("day") != day:
         state = {"day": day, "stocks": {}, "holiday": False, "stopped": ""}
-    if state["holiday"] or state["stopped"]:
+    if state["holiday"] or state["stopped"] or _paused(state):
         return state, []
     todo = [s for s in m.stocks if not state["stocks"].get(s, {}).get("done")]
     if not todo:
@@ -79,8 +105,7 @@ async def check(key: str, state: dict, pots: dict[str, float]) -> tuple[dict, li
         for s in todo:
             fetched[s] = await data.day(s, day, finished=False)
     except data.DataError as e:
-        state["stopped"] = str(e)
-        return state, [f"⏸ {m.name} live checks stopped for today: {e}"]
+        return _refused(key, state, e), [_refused_line(key, state, e)] if _first_refusal(state, e) else []
 
     now = market_now(key)
     if not any(fetched.values()):
@@ -121,7 +146,7 @@ async def check_one(key: str, symbol: str, state: dict, pot: float) -> tuple[dic
     day = session_date(key)
     if state.get("day") != day:
         state = {"day": day, "stocks": {}, "holiday": False, "stopped": ""}
-    if not is_open(key) or state["holiday"] or state["stopped"]:
+    if not is_open(key) or state["holiday"] or state["stopped"] or _paused(state):
         return state, [], False
     if state["stocks"].get(symbol, {}).get("done"):   # sold, or too late to buy: its trade can't change today
         return state, [], False
@@ -130,8 +155,8 @@ async def check_one(key: str, symbol: str, state: dict, pot: float) -> tuple[dic
     try:
         candles = await data.day(symbol, day, finished=False)
     except data.DataError as e:
-        state["stopped"] = str(e)
-        return state, [f"⏸ {MARKETS[key].name} live checks stopped for today: {e}"], True
+        lines = [_refused_line(key, state, e)] if _first_refusal(state, e) else []
+        return _refused(key, state, e), lines, True
     lines: list[str] = []
     if candles:
         _update(key, symbol, candles, pot, state, lines)

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import httpx
 
-from .rules import STOCKS
+from .rules import SYMBOLS
 
 _ENV_FILES = [Path(__file__).resolve().parent.parent / "apps" / "api" / ".env"]
 _days: OrderedDict[tuple[str, str], list[dict]] = OrderedDict()   # (symbol, day) -> candles; finished days only
@@ -41,7 +41,12 @@ def _count() -> None:
 
 
 class DataError(Exception):
-    """FMP couldn't give us prices; the message says why, in a sentence."""
+    """FMP couldn't give us prices; the message says why, in a sentence. `busy` means "too many requests
+    right now" (429): worth trying again in a few minutes, unlike a bad key or a plan that doesn't cover it."""
+
+    def __init__(self, message: str, busy: bool = False):
+        super().__init__(message)
+        self.busy = busy
 
 
 def _env(name: str) -> str:
@@ -68,8 +73,10 @@ async def _get(params: dict) -> list[dict]:
         _count()
         async with httpx.AsyncClient(timeout=45) as client:
             r = await client.get(url, params={**params, "apikey": key})
-    if r.status_code in (401, 402, 403, 429):
-        raise DataError(f"Financial Modeling Prep refused the request ({r.status_code}): the API key, the plan or today's call limit.")
+    if r.status_code == 429:
+        raise DataError("Financial Modeling Prep says too many requests right now (429)", busy=True)
+    if r.status_code in (401, 402, 403):
+        raise DataError(f"Financial Modeling Prep refused the request ({r.status_code}): the API key or the plan doesn't allow it.")
     r.raise_for_status()
     data = r.json()
     if not isinstance(data, list):
@@ -79,7 +86,7 @@ async def _get(params: dict) -> list[dict]:
 
 
 def fmp_symbol(symbol: str) -> str:
-    return symbol + STOCKS[symbol].suffix
+    return symbol + SYMBOLS[symbol].suffix
 
 
 async def latest(symbol: str) -> list[dict]:

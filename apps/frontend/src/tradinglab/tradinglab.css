@@ -139,3 +139,8 @@
 .tl-flash-down { background-color: rgba(239, 83, 80, .22) !important; }
 .tl-price { font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .tl-live-stock { transition: none; } }
+
+/* strategy test */
+.tl-test-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 12px; }
+.tl-test-head p { margin: 0; flex: 1; min-width: 240px; }
+.tl-best { margin-left: 8px; font-size: 11px; }

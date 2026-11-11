@@ -3,6 +3,7 @@ import { errorText } from "../lib/api";
 import Icon, { type IconName } from "../components/Icon";
 import CandleChart from "./CandleChart";
 import LiveCard from "./LiveCard";
+import BacktestCard from "./BacktestCard";
 import { getDay, getLab, loaded, refreshLab, startLab, type DayReplay, type LabView, type MarketKey, type Rules } from "./api";
 import { money, price, shortDate, signed, tone } from "./format";
 import "./tradinglab.css";
@@ -134,6 +135,8 @@ function Running({ lab, busy, onRestart }: { lab: Started; busy: boolean; onRest
       ) : (
         <DayCard key={date!} days={days} date={date!} onPick={pick} note={pickNote} lab={lab} symbol={symbol} setSymbol={setSymbol} />
       )}
+
+      <BacktestCard lab={lab} />
 
       <section className="card">
         <div className="card-head"><h2>Stocks</h2><span className="muted small">{money(pot, "INR", 0)} or {money(pot, "USD", 0)} each</span></div>

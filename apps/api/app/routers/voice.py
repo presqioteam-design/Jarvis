@@ -47,7 +47,7 @@ if something isn't there, say you don't have it. When the admin asks you to DO s
   send <n> | send <n> in <area> | send follow ups | check replies | pause auto | resume auto | auto status | report
   show leads in <area> | approve all with email in <area> | scan <area> <n>km (every kind) | scan <kind> in <area> <n>km
   explore status | pause explore | resume explore | explore <city> next | usage | help
-  lab status | lab day <YYYY-MM-DD or yesterday> [stock] | lab check   (the Trading Lab)
+  lab status | lab day <YYYY-MM-DD, today or yesterday> [stock] | lab check | lab test   (the Trading Lab)
 For a question about something that changed during the call (like "did anyone reply?"), you may also use the tool with
 the question itself. Never send more than 50 emails. If they ask you to send without a number, ask how many.
 ENDING THE CALL: when the admin wants to stop talking ("cut the call", "hang up", "end the call", "bye", "that's all",

@@ -319,6 +319,32 @@ async def live_stock(symbol: str) -> dict:
             "open": live.is_open(key)}
 
 
+@router.get("/backtest", dependencies=[Depends(require_user)])
+async def backtest_view() -> dict:
+    """The last strategy-tester comparison published from the laptop (python -m tradinglab.backtest --publish)."""
+    snap = col("tradinglab").document("backtest").get()
+    return {"result": snap.to_dict() if snap.exists else None}
+
+
+def backtest_text() -> str:
+    """The strategy tester's comparison in sentences, for Jarvis."""
+    snap = col("tradinglab").document("backtest").get()
+    if not snap.exists:
+        return "The strategy tester hasn't been run yet (it runs on the laptop: python -m tradinglab.backtest --publish)."
+    res = snap.to_dict()
+    lines = [f"STRATEGY TEST ({res['from']} to {res['to']}, fixed 1,000 a trade, after charges; "
+             "'both' = better than the current rules in the first and the last part of the period):"]
+    for k, m in MARKETS.items():
+        rows = sorted(res["variants"], key=lambda r: -r["markets"][k]["all"]["pnl"])
+        cur = next(r for r in res["variants"] if r["key"] == "current")["markets"][k]["all"]
+        lines.append(f"- {m.name}: current rules {_cur(m.currency, cur['pnl'], True)} over {cur['trades']} trades ({cur['winRate']:.0f}% won). "
+                     "Best: " + "; ".join(f"{r['name']} {_cur(m.currency, r['markets'][k]['all']['pnl'], True)}"
+                                          f"{' (both)' if r['markets'][k]['beatsCurrentInBoth'] else ''}" for r in rows[:4]))
+        best = next(r for r in res["variants"] if r["key"] == res["best"][k])
+        lines.append(f"  Recommended for {m.name}: {best['name']}: {best['about']}.")
+    return "\n".join(lines)
+
+
 @router.get("/live", dependencies=[Depends(require_user)])
 async def live_view() -> dict:
     """What's happening now, from the last check: no request to FMP, two small reads."""
@@ -376,6 +402,8 @@ def briefing() -> str:
             lines.append(f"- LIVE NOW, {m.name} (checked {st.get('checkedAt')} exchange time): {now}")
         elif live.is_open(k) and st.get("holiday"):
             lines.append(f"- LIVE NOW, {m.name}: market holiday today")
+    if col("tradinglab").document("backtest").get().exists:
+        lines.append("A strategy test comparing smarter rules exists: use the command 'lab test' for it.")
     lines.append("For trade times and reasons on a day, use the command 'lab day <YYYY-MM-DD> [stock]' (today works while trading).")
     return "\n".join(lines)
 
