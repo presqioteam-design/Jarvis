@@ -35,20 +35,35 @@ TARGET, STOP, MAX_DAYS = 5.0, 3.0, 10
 
 # ── daily candles ────────────────────────────────────────────────────────────
 
+_memory: dict[tuple[str, str], tuple[float, list[dict]]] = {}
+FRESH_S = 3 * 3600   # daily candles change once a day; a few hours' reuse is plenty
+
+
 async def daily(symbol: str, since: str) -> list[dict]:
-    """Daily candles oldest first, cached for a day (one request per symbol covers years)."""
+    """Daily candles oldest first (one request per symbol covers years). Reused for a few hours: from
+    memory, or from the laptop's cache folder (the server can't write one, so it keeps them in memory)."""
+    hit = _memory.get((symbol, since))
+    if hit and time.time() - hit[0] < FRESH_S:
+        return hit[1]
     p = CACHE / f"{symbol}_{since}.json.gz"
-    if p.exists() and time.time() - p.stat().st_mtime < 86400:
+    if p.exists() and time.time() - p.stat().st_mtime < FRESH_S:
         with gzip.open(p, "rt") as f:
-            return json.load(f)
+            rows = json.load(f)
+        _memory[(symbol, since)] = (time.time(), rows)
+        return rows
     url, key = data._env("INTRADAY_HISTORICAL_URL"), data._env("INTRADAY_HISTORICAL_API")
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.get(url, params={"symbol": data.fmp_symbol(symbol), "from": since, "apikey": key})
     r.raise_for_status()
     rows = sorted(({k: x[k] for k in ("date", "open", "high", "low", "close", "volume")} for x in r.json()), key=lambda c: c["date"])
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with gzip.open(p, "wt") as f:
-        json.dump(rows, f)
+    data._count()
+    _memory[(symbol, since)] = (time.time(), rows)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with gzip.open(p, "wt") as f:
+            json.dump(rows, f)
+    except OSError:
+        pass   # read-only (the server): memory is enough
     return rows
 
 
@@ -91,10 +106,11 @@ def signal(rule: str, closes: list[float], i: int, bench_up: bool | None) -> boo
     return False
 
 
-def trades_for(market: str, rule: str, rows: list[dict], bench: dict[str, bool], amount: float, start: str) -> list[dict]:
-    """Every trade one stock would have made under one rule, from `start` on."""
+def replay(market: str, rule: str, rows: list[dict], bench: dict[str, bool], amount: float, start: str) -> dict:
+    """One stock under one rule from `start`: closed trades, the position still open at the end of the data
+    (with where it stands), and whether the last close signalled a buy at the next open."""
     closes = [r["close"] for r in rows]
-    out, i = [], 0
+    trades, held, i = [], None, 0
     while i < len(rows) - 1:
         if rows[i]["date"] < start or not signal(rule, closes, i, bench.get(rows[i]["date"])):
             i += 1
@@ -115,13 +131,31 @@ def trades_for(market: str, rule: str, rows: list[dict], bench: dict[str, bool],
             if exit_price is not None:
                 exit_day = j
                 break
-        if exit_price is None:   # still open at the end of the data: leave it out
-            break
+        if exit_price is None:   # still held at the end of the data
+            last = rows[-1]
+            value = qty * last["close"] - delivery_charges(market, "sell", qty * last["close"], qty)
+            held = {"buy": e["date"], "buyPrice": price, "qty": round(qty, 4), "last": last["close"], "lastDate": last["date"],
+                    "daysHeld": len(rows) - 1 - i, "target": round(target, 2), "stop": round(stop, 2),
+                    "pnl": round(value - amount, 2), "pnlPct": round((last["close"] / price - 1) * 100, 2)}
+            return {"trades": trades, "held": held, "buyNext": False}
         proceeds = qty * exit_price - delivery_charges(market, "sell", qty * exit_price, qty)
-        out.append({"buy": e["date"], "sell": rows[exit_day]["date"], "days": exit_day - i, "pnl": round(proceeds - amount, 2),
-                    "why": why, "buyPrice": price, "sellPrice": round(exit_price, 2)})
+        trades.append({"buy": e["date"], "sell": rows[exit_day]["date"], "days": exit_day - i, "pnl": round(proceeds - amount, 2),
+                       "why": why, "buyPrice": price, "sellPrice": round(exit_price, 2)})
         i = exit_day + 1   # one position at a time: look again after selling
-    return out
+    last_i = len(rows) - 1
+    buy_next = bool(rows) and rows[last_i]["date"] >= start and signal(rule, closes, last_i, bench.get(rows[last_i]["date"]))
+    return {"trades": trades, "held": None, "buyNext": buy_next}
+
+
+def trades_for(market: str, rule: str, rows: list[dict], bench: dict[str, bool], amount: float, start: str) -> list[dict]:
+    """Every closed trade one stock would have made under one rule, from `start` on."""
+    return replay(market, rule, rows, bench, amount, start)["trades"]
+
+
+def bench_up(rows: list[dict]) -> dict[str, bool]:
+    """date -> was the market ETF above its 50-day average at that close."""
+    c = [r["close"] for r in rows]
+    return {r["date"]: (_sma(c, i, 50) is not None and c[i] > _sma(c, i, 50)) for i, r in enumerate(rows)}
 
 
 def _score(trades: list[dict], amount: float, stocks: int) -> dict:
@@ -164,6 +198,60 @@ async def run(start: str, amounts: tuple[float, ...] = (1000.0, 10000.0)) -> dic
             res["amounts"][str(int(amount))] = per
         out["markets"][key] = res
     return out
+
+
+# ── for the live lab ─────────────────────────────────────────────────────────
+
+LIVE_RULE, LIVE_MARKET = "A", "US"   # the one swing strategy the lab runs: breakout + market, US stocks
+
+
+async def _finished_rows(symbol: str, since: str, before: str | None) -> list[dict]:
+    rows = await daily(symbol, since)
+    return [r for r in rows if not before or r["date"] < before]
+
+
+async def lab_state(start: str, amount: float = 1000.0, unfinished: str | None = None) -> dict:
+    """The live lab's US swing strategy since `start`: closed trades, open positions and buys due at the
+    next open. `unfinished`: a session still trading today, left out so a half day can't trigger anything."""
+    m = MARKETS[LIVE_MARKET]
+    warm = (date.fromisoformat(start) - timedelta(days=120)).isoformat()
+    up = bench_up(await _finished_rows(m.benchmark, warm, unfinished))
+    stocks, closed, held, buy_next, as_of = {}, [], [], [], ""
+    for s in m.stocks:
+        rows = await _finished_rows(s, warm, unfinished)
+        r = replay(LIVE_MARKET, LIVE_RULE, rows, up, amount, start)
+        as_of = max(as_of, rows[-1]["date"]) if rows else as_of
+        closed += [{**t, "symbol": s} for t in r["trades"]]
+        if r["held"]:
+            held.append({**r["held"], "symbol": s})
+        if r["buyNext"]:
+            buy_next.append(s)
+    realised = round(sum(t["pnl"] for t in closed), 2)
+    unrealised = round(sum(h["pnl"] for h in held), 2)
+    return {"rule": "Breakout + market (rule A)", "market": LIVE_MARKET, "start": start, "amount": amount, "asOf": as_of,
+            "realised": realised, "unrealised": unrealised, "total": round(realised + unrealised, 2),
+            "trades": len(closed), "wins": sum(1 for t in closed if t["pnl"] > 0),
+            "closed": sorted(closed, key=lambda t: t["sell"], reverse=True), "held": held, "buyNext": buy_next,
+            "about": f"Buy at the next open after a close above the 20-day high while SPY is above its 50-day average; "
+                     f"sell at +{TARGET:g}%, −{STOP:g}% or after {MAX_DAYS} days. {amount:,.0f} a trade."}
+
+
+async def hold_since(key: str, start: str, amount: float = 1000.0, unfinished: str | None = None) -> dict:
+    """The yardstick: buy each of the market's 5 stocks with `amount` at the first open on or after `start`
+    and simply keep them. Value at the last finished close, as if sold then (charges included)."""
+    m = MARKETS[key]
+    warm = (date.fromisoformat(start) - timedelta(days=120)).isoformat()   # same request as lab_state's
+    total, per = 0.0, {}
+    for s in m.stocks:
+        rows = [r for r in await _finished_rows(s, warm, unfinished) if r["date"] >= start]
+        if not rows:
+            continue
+        first, last = rows[0], rows[-1]
+        q = (amount - delivery_charges(key, "buy", amount, amount / first["open"])) / first["open"]
+        pnl = q * last["close"] - delivery_charges(key, "sell", q * last["close"], q) - amount
+        per[s] = {"buy": first["open"], "last": last["close"], "pnl": round(pnl, 2)}
+        total += pnl
+    return {"pnl": round(total, 2), "pnlPct": round(total / (amount * len(m.stocks)) * 100, 2), "start": start, "stocks": per}
 
 
 def show(res: dict) -> None:

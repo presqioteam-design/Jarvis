@@ -48,6 +48,7 @@ or, when the admin clearly asks you to do something, one of these actions:
 {{"reply": "...", "action": {{"name": "lab_status"}}}}   (the Trading Lab's totals)
 {{"reply": "...", "action": {{"name": "lab_day", "date": "<YYYY-MM-DD or null for the latest>", "symbol": "<stock or null>"}}}}   (a lab day's trades, times and reasons)
 {{"reply": "...", "action": {{"name": "lab_check"}}}}   (replay sessions that finished since the last run)
+{{"reply": "...", "action": {{"name": "lab_swing"}}}}   (the US swing strategy: positions held for days, and buy-and-hold for comparison)
 {{"reply": "...", "action": {{"name": "lab_test"}}}}   (the strategy tester: which smarter rules did best on months of past data)
 {{"reply": "...", "action": {{"name": "scan", "place": "<city, or area and city>", "radius_km": <number or null for a whole city>, "category": "<{category_keys}>"}}}}
 
@@ -221,6 +222,7 @@ Kinds: hotels, hospitals, schools, restaurants, factories, retail, IT, offices, 
 • lab day 2026-11-06 — every trade that day (add a stock: lab day yesterday HDFCBANK)
 • lab check — replay sessions that finished since the last run
 • lab test — which smarter rules did best on months of past data
+• lab swing — the US swing strategy (held for days) and buy-and-hold for comparison
 
 📊 report — today's numbers now (also sent at 7 PM, with a voice note)
 📈 usage — today's AI and voice usage against the daily limits
@@ -247,6 +249,7 @@ COMMANDS = [
     (re.compile(r"^(?:trading\s+)?lab(?:\s+status)?[.!?]*$|^trading(?:\s+lab)?(?:\s+status)?[.!?]*$", re.I), lambda m: {"name": "lab_status"}),
     (re.compile(r"^(?:check\s+(?:the\s+)?(?:trading\s+)?lab|(?:trading\s+)?lab\s+check)[.!?]*$", re.I), lambda m: {"name": "lab_check"}),
     (re.compile(r"^(?:trading\s+)?lab\s+(?:test|backtest|strategy|strategies)[.!?]*$", re.I), lambda m: {"name": "lab_test"}),
+    (re.compile(r"^(?:trading\s+)?lab\s+swing[.!?]*$", re.I), lambda m: {"name": "lab_swing"}),
     (re.compile(r"^(?:trading\s+)?lab\s+(?:day\s+)?(\d{4}-\d{2}-\d{2}|today|yesterday|latest|last)(?:\s+([A-Za-z&]+))?[.!?]*$", re.I),
      lambda m: {"name": "lab_day", "date": m[1], "symbol": m[2]}),
     (re.compile(r"^approve\s+([\d,\s]+|\d+(?:\s*(?:,|and)\s*\d+)*)$", re.I), lambda m: {"name": "approve", "numbers": re.findall(r"\d+", m[1])}),
@@ -315,6 +318,9 @@ def run_action(action: dict) -> tuple[bool, str]:
     if name == "lab_test":
         from tradinglab.jarvis_api import backtest_text
         return False, backtest_text()
+    if name == "lab_swing":
+        from tradinglab.jarvis_api import swing_text
+        return False, swing_text()
     if name == "explore_status":
         return False, explore.status()
     if name == "explore_on":

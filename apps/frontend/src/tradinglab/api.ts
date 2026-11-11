@@ -46,6 +46,19 @@ export const startLab = (startDate: string) => call<LabView>("/tradinglab/start"
 export const refreshLab = () => call<LabView>("/tradinglab/refresh", {});
 export const getDay = (date: string) => call<DayReplay>(`/tradinglab/day/${date}`);
 export const getLive = () => call<LiveView>("/tradinglab/live");
+
+export type SwingTrade = { symbol: string; buy: string; sell: string; days: number; pnl: number; why: string; buyPrice: number; sellPrice: number };
+export type SwingHeld = { symbol: string; buy: string; buyPrice: number; qty: number; last: number; lastDate: string; daysHeld: number;
+  target: number; stop: number; pnl: number; pnlPct: number };
+export type Hold = { pnl: number; pnlPct: number; start: string };
+export type Extras = {
+  error?: string;
+  swing?: { rule: string; start: string; amount: number; asOf: string; realised: number; unrealised: number; total: number;
+    trades: number; wins: number; closed: SwingTrade[]; held: SwingHeld[]; buyNext: string[]; about: string };
+  hold?: Record<MarketKey, Hold>;
+};
+/** The US swing strategy and the buy-and-hold yardstick (daily prices, reused for hours on the server). */
+export const getExtras = () => call<Extras>("/tradinglab/extras");
 /** Run a live check now if the last is over 4 minutes old (only open markets); returns the live view. */
 export const checkLiveNow = () => call<LiveView>("/tradinglab/live/check", {});
 /** The stock on screen, refreshed (one request at most every 55 s, only while its market is open). */

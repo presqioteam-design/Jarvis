@@ -4,7 +4,8 @@ import Icon, { type IconName } from "../components/Icon";
 import CandleChart from "./CandleChart";
 import LiveCard from "./LiveCard";
 import BacktestCard from "./BacktestCard";
-import { getDay, getLab, loaded, refreshLab, startLab, type DayReplay, type LabView, type MarketKey, type Rules } from "./api";
+import SwingCard from "./SwingCard";
+import { getDay, getExtras, getLab, loaded, refreshLab, startLab, type DayReplay, type Extras, type LabView, type MarketKey, type Rules } from "./api";
 import { money, price, shortDate, signed, tone } from "./format";
 import "./tradinglab.css";
 
@@ -98,6 +99,8 @@ function Running({ lab, busy, onRestart }: { lab: Started; busy: boolean; onRest
     return out;
   }, [days]);
 
+  const [extras, setExtras] = useState<Extras | null>(null);
+  useEffect(() => { getExtras().then(setExtras).catch(() => setExtras(null)); }, [days.length]);
   const totalTrades = MARKET_ORDER.reduce((n, k) => n + config.totals[k].trades, 0);
   const totalWins = MARKET_ORDER.reduce((n, k) => n + config.totals[k].wins, 0);
 
@@ -117,7 +120,12 @@ function Running({ lab, busy, onRestart }: { lab: Started; busy: boolean; onRest
           const start = pot * m.stocks.length;
           return (
             <Kpi key={k} icon="chart" label={m.name} value={money(pots + t.withdrawn, m.currency)} accent={k === "IN"}
-              note={<><span className={tone(t.pnl)}>{signed(t.pnl, m.currency)} ({signed((t.pnl / start) * 100, "%")})</span> on {money(start, m.currency, 0)}</>} />
+              note={<>
+                <span className={tone(t.pnl)}>{signed(t.pnl, m.currency)} ({signed((t.pnl / start) * 100, "%")})</span> on {money(start, m.currency, 0)}
+                {extras?.hold?.[k] && (
+                  <span className="tl-yard">Buy and hold the same 5: <span className={tone(extras.hold[k].pnl)}>{signed(extras.hold[k].pnl, m.currency)} ({signed(extras.hold[k].pnlPct, "%")})</span></span>
+                )}
+              </>} />
           );
         })}
         <Kpi icon="check" label="Profit withdrawn" value={MARKET_ORDER.map((k) => money(config.totals[k].withdrawn, markets[k].currency)).join(" · ")}
@@ -135,6 +143,8 @@ function Running({ lab, busy, onRestart }: { lab: Started; busy: boolean; onRest
       ) : (
         <DayCard key={date!} days={days} date={date!} onPick={pick} note={pickNote} lab={lab} symbol={symbol} setSymbol={setSymbol} />
       )}
+
+      <SwingCard extras={extras} />
 
       <BacktestCard lab={lab} />
 

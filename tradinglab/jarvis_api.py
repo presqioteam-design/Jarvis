@@ -22,7 +22,7 @@ from app.firebase import col, db
 from app.services import keepalive, telegram
 from app.timeutil import now_utc
 
-from . import data, live
+from . import data, live, swing
 from .engine import candles_every, simulate_day
 from .lab import last_closed_session, newest_available, replay_day, weekdays
 from .rules import DEFAULT_STRATEGY, MARKETS, RULES, STRATEGIES, strategy
@@ -105,6 +105,10 @@ async def process(notify: bool = False) -> list[str]:
             await telegram.send("📈 Trading Lab (paper money)\n" + "\n".join(lines))
         except Exception:
             log.exception("Couldn't send the Trading Lab update")
+    try:
+        await _swing_update(notify)
+    except Exception:
+        log.exception("US swing update failed")
     return lines
 
 
@@ -258,6 +262,89 @@ async def _replay_live(day: str, only: str | None = None) -> dict | None:
 
     return {"date": day, "live": True,
             "stocks": await asyncio.gather(*(one(s, k) for k in keys for s in MARKETS[k].stocks if not only or s == only))}
+
+
+# ── US swing strategy and the buy-and-hold yardstick ────────────────────────
+
+_extras: dict = {"at": 0.0, "value": None}
+EXTRAS_FRESH_S = 600
+
+
+async def extras(cfg: dict, fresh: bool = False) -> dict:
+    """The US swing strategy's state and buy-and-hold per market since the lab's start. Daily candles:
+    11 requests at most, reused for hours; a session still trading today is left out."""
+    if not fresh and _extras["value"] and time.monotonic() - _extras["at"] < EXTRAS_FRESH_S:
+        return _extras["value"]
+    unfinished = {k: live.session_date(k) if live.is_open(k) else None for k in MARKETS}
+    try:
+        sw = await swing.lab_state(cfg.get("swingStart") or cfg["startDate"], unfinished=unfinished["US"])
+        hold = {k: await swing.hold_since(k, cfg["startDate"], unfinished=unfinished[k]) for k in MARKETS}
+        value = {"swing": sw, "hold": hold}
+    except Exception as e:
+        log.warning("Couldn't build the swing strategy / yardstick: %s", e)
+        value = {"error": f"Daily prices unavailable just now ({type(e).__name__})"}
+    _extras.update(at=time.monotonic(), value=value)
+    return value
+
+
+async def _swing_update(notify: bool) -> None:
+    """After a session: save the swing strategy's P&L for its latest day, and tell Telegram about its
+    buys, sells and next-open buys once per day."""
+    cfg = _config()
+    if not cfg:
+        return
+    ex = await extras(cfg, fresh=True)
+    sw = ex.get("swing")
+    if not sw or not sw.get("asOf"):
+        return
+    day = sw["asOf"]
+    col("tradinglab_swing").document(day).set({"date": day, "realised": sw["realised"], "unrealised": sw["unrealised"],
+                                                 "total": sw["total"], "trades": sw["trades"], "wins": sw["wins"], "open": len(sw["held"])})
+    meta_ref = col("tradinglab").document("swing_meta")
+    meta = (meta_ref.get().to_dict() or {}) if meta_ref.get().exists else {}
+    lines = []
+    if meta.get("notified") != day:
+        for t in sw["closed"]:
+            if t["sell"] == day:
+                lines.append(f"{'✅' if t['pnl'] > 0 else '🔻'} Swing: sold {t['symbol']} ({t['why']}), {_cur('USD', t['pnl'], True)}")
+        for h in sw["held"]:
+            if h["buy"] == day:
+                lines.append(f"🟢 Swing: bought {h['symbol']} at ${h['buyPrice']:,.2f}; target ${h['target']:,.2f}, stop ${h['stop']:,.2f}")
+        for s in sw["buyNext"]:
+            lines.append(f"👀 Swing: {s} closed above its 20-day high with SPY up; buying at the next open")
+    meta_ref.set({"notified": day, "summary": {
+        "asOf": day, "total": sw["total"], "realised": sw["realised"], "unrealised": sw["unrealised"], "trades": sw["trades"], "wins": sw["wins"],
+        "held": [{k: h[k] for k in ("symbol", "buy", "buyPrice", "last", "pnl", "target", "stop", "daysHeld")} for h in sw["held"]],
+        "buyNext": sw["buyNext"], "hold": {k: {"pnl": v["pnl"], "pnlPct": v["pnlPct"]} for k, v in ex.get("hold", {}).items()}}})
+    if notify and lines:
+        try:
+            await telegram.send("📈 Trading Lab, US swing (paper money)\n" + "\n".join(lines))
+        except Exception:
+            log.exception("Couldn't send the swing update")
+
+
+@router.get("/extras", dependencies=[Depends(require_user)])
+async def extras_view() -> dict:
+    cfg = _config()
+    return await extras(cfg) if cfg else {}
+
+
+def swing_text() -> str:
+    snap = col("tradinglab").document("swing_meta").get()
+    if not snap.exists:
+        return "The US swing strategy hasn't run yet; it updates after each US session (or say 'lab check')."
+    s = snap.to_dict()["summary"]
+    lines = [f"US SWING STRATEGY (paper, $1,000 a trade, rule A: 20-day breakout while SPY is above its 50-day average; "
+             f"+5% / −3% / 10 days), up to {s['asOf']}: total {_cur('USD', s['total'], True)} "
+             f"({s['trades']} closed trades, {s['wins']} won; open positions {_cur('USD', s['unrealised'], True)})."]
+    for h in s["held"]:
+        lines.append(f"- Holding {h['symbol']} since {h['buy']} at ${h['buyPrice']:,.2f}, now ${h['last']:,.2f} ({_cur('USD', h['pnl'], True)}); "
+                     f"target ${h['target']:,.2f}, stop ${h['stop']:,.2f}, day {h['daysHeld']} of 10")
+    if s["buyNext"]:
+        lines.append("- Buying at the next open: " + ", ".join(s["buyNext"]))
+    for k, h in s.get("hold", {}).items():
+        lines.append(f"- Yardstick, buy and hold {MARKETS[k].name}'s 5 stocks since the start: {_cur(MARKETS[k].currency, h['pnl'], True)} ({h['pnlPct']:+.2f}%)")
+    return "\n".join(lines)
 
 
 # ── live paper trading during market hours ───────────────────────────────────
@@ -428,6 +515,8 @@ def briefing() -> str:
             lines.append(f"- LIVE NOW, {m.name} (checked {st.get('checkedAt')} exchange time): {now}")
         elif live.is_open(k) and st.get("holiday"):
             lines.append(f"- LIVE NOW, {m.name}: market holiday today")
+    if col("tradinglab").document("swing_meta").get().exists:
+        lines.append(swing_text().replace("\n", "\n  "))
     if col("tradinglab").document("backtest").get().exists:
         lines.append("A strategy test comparing smarter rules exists: use the command 'lab test' for it.")
     lines.append("For trade times and reasons on a day, use the command 'lab day <YYYY-MM-DD> [stock]' (today works while trading).")
