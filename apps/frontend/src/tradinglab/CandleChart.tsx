@@ -32,16 +32,20 @@ function group(candles: Candle[], every: Interval): Candle[] {
  * Zoom: the + / − buttons, pinch or Ctrl/⌘ + scroll, double-click. Move: drag, or scroll sideways.
  * Every change of view eases into place, so it's easy to keep your eye on the candles.
  */
-export default function CandleChart({ candles, range, trade, currency, symbol }: {
+export default function CandleChart({ candles, range, trade, currency, symbol, live = false }: {
   candles: Candle[]; range: { high: number; low: number; until: string } | null; trade: Trade | null; currency: Currency; symbol: string;
+  /** today, still trading: start on 1-minute candles near the latest, follow new ones, show the current price */
+  live?: boolean;
 }) {
-  const [interval, setInterval_] = useState<Interval>(5);
+  const [interval, setInterval_] = useState<Interval>(live ? 1 : 5);
   const bars = useMemo(() => group(candles.map((c) => ({ ...c })), interval), [candles, interval]);
   const n = bars.length;
 
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
-  const [view, setView] = useState<View>({ a: 0, b: n });
+  const LIVE_SPAN = 90;   // live: open on the last 90 candles
+  const firstView = (count: number): View => (live ? { a: Math.max(0, count - LIVE_SPAN), b: count } : { a: 0, b: count });
+  const [view, setView] = useState<View>(() => firstView(n));
   const viewRef = useRef(view);
   viewRef.current = view;
   const anim = useRef<number | null>(null);
@@ -85,16 +89,18 @@ export default function CandleChart({ candles, range, trade, currency, symbol }:
   };
   useEffect(() => stop, []);
 
-  // a new day or stock shows the whole session; a new candle size keeps the same stretch of time
-  const prevN = useRef(n);
-  useEffect(() => { setView({ a: 0, b: n }); }, [candles]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // - another stock (or another day) starts fresh
+  // - another candle size keeps the same stretch of time
+  // - live: new candles slide the view along, but only while you're looking at the latest one;
+  //   if you've moved back to study earlier candles, the view stays where you put it
+  const prev = useRef({ candles, interval, n, symbol });
   useEffect(() => {
-    if (prevN.current !== n && prevN.current > 0) {
-      const k = n / prevN.current, v = viewRef.current;
-      setView(clamp({ a: v.a * k, b: v.b * k }));
-    }
-    prevN.current = n;
-  }, [n, clamp]);
+    const p = prev.current, v = viewRef.current;
+    if (p.symbol !== symbol || (!live && p.candles !== candles)) setView(firstView(n));
+    else if (p.interval !== interval && p.n > 0) setView(clamp({ a: v.a * (n / p.n), b: v.b * (n / p.n) }));
+    else if (live && n > p.n && v.b >= p.n - 0.5) animateTo({ a: v.a + (n - p.n), b: n });
+    prev.current = { candles, interval, n, symbol };
+  }, [candles, interval, n, symbol]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const w = Math.max(0, width - PAD.left - PAD.right), h = H - PAD.top - PAD.bottom - VOL_H - VOL_GAP;
   const volTop = PAD.top + h + VOL_GAP, plotBottom = volTop + VOL_H;
@@ -239,7 +245,9 @@ export default function CandleChart({ candles, range, trade, currency, symbol }:
             {ticks.map((t) => (
               <g key={t}>
                 <line x1={PAD.left} x2={PAD.left + w} y1={y(t)} y2={y(t)} className="tl-grid" />
+                {!(live && n > 0 && Math.abs(y(t) - y(bars[n - 1].close)) < 14) && (   // the live price tag wins over a nearby label
                 <text x={PAD.left + w + 8} y={y(t)} className="tl-axis" dominantBaseline="middle">{price(t)}</text>
+              )}
               </g>
             ))}
             <g clipPath={`url(#tl-clip-${symbol})`}>
@@ -286,8 +294,10 @@ export default function CandleChart({ candles, range, trade, currency, symbol }:
                       </text>
                     </g>
                   )}
-                  <Marker x={px(buyI)} y={y(trade.buyPrice)} kind="buy" label={`Buy ${trade.buyTime} · ${price(trade.buyPrice)}`} left={PAD.left} right={PAD.left + w} />
-                  {trade.sellTime ? (
+                  {buyI >= i0 && buyI <= i1 && (   // a marker scrolled out of view is hidden, not cut off at the edge
+                    <Marker x={px(buyI)} y={y(trade.buyPrice)} kind="buy" label={`Buy ${trade.buyTime} · ${price(trade.buyPrice)}`} left={PAD.left} right={PAD.left + w} />
+                  )}
+                  {sellI < i0 || sellI > i1 ? null : trade.sellTime ? (
                     <Marker x={px(sellI)} y={y(sellPrice)} kind="sell" label={`Sell ${trade.sellTime} · ${price(sellPrice)}`} left={PAD.left} right={PAD.left + w} />
                   ) : (
                     <circle cx={px(sellI)} cy={y(sellPrice)} r={4} className="tl-now-dot" />
@@ -295,7 +305,14 @@ export default function CandleChart({ candles, range, trade, currency, symbol }:
                 </g>
               )}
               {c && hover !== null && <line x1={px(hover)} x2={px(hover)} y1={PAD.top} y2={plotBottom} className="tl-cross" />}
+              {live && n > 0 && <line x1={PAD.left} x2={PAD.left + w} y1={y(bars[n - 1].close)} y2={y(bars[n - 1].close)} className="tl-last-line" />}
             </g>
+            {live && n > 0 && (   // the current price, tagged on the price axis like a trading app
+              <g className={bars[n - 1].close >= bars[n - 1].open ? "tl-last-up" : "tl-last-down"}>
+                <rect x={PAD.left + w + 2} y={y(bars[n - 1].close) - 9} width={PAD.right - 4} height={18} rx={4} />
+                <text x={PAD.left + w + 8} y={y(bars[n - 1].close)} dominantBaseline="middle">{price(bars[n - 1].close)}</text>
+              </g>
+            )}
             <line x1={PAD.left} x2={PAD.left + w} y1={volTop - VOL_GAP / 2} y2={volTop - VOL_GAP / 2} className="tl-grid" />
             <text x={PAD.left + w + 8} y={volTop + 6} className="tl-axis">{compact(vmax)}</text>
             <text x={PAD.left + w + 8} y={plotBottom} className="tl-axis">Vol</text>

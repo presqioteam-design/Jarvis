@@ -209,17 +209,20 @@ async def _replay(day: str) -> dict | None:
     return {"date": day, "stocks": await asyncio.gather(*(one(s, stocks[s]) for s in order))}
 
 
-async def _replay_live(day: str) -> dict | None:
+async def _replay_live(day: str, only: str | None = None) -> dict | None:
+    """Today while trading, from the candles the live checks already fetched. `only`: just that stock."""
     cfg = _config()
-    keys = [k for k in MARKETS if live.session_date(k) == day and (_live_state(k) or {}).get("day") == day]
+    keys = [k for k in MARKETS if live.session_date(k) == day and (_live_state(k) or {}).get("day") == day
+            and (not only or only in MARKETS[k].stocks)]
     if not cfg or not keys:
         return None
 
     async def one(symbol: str, key: str) -> dict:
         candles = live.candles_today(symbol)
-        if candles is None:   # the server restarted since the last check
+        if candles is None:   # the server restarted since the last check: fetch once and keep them
             try:
                 candles = await data.day(symbol, day, finished=False)
+                live.remember(symbol, candles)
             except data.DataError as e:
                 return {"symbol": symbol, "market": key, "error": str(e)}
         pot = cfg["pots"][key].get(symbol, RULES.pot)
@@ -229,7 +232,7 @@ async def _replay_live(day: str) -> dict | None:
                 "state": r["state"], "live": True}
 
     return {"date": day, "live": True,
-            "stocks": await asyncio.gather(*(one(s, k) for k in keys for s in MARKETS[k].stocks))}
+            "stocks": await asyncio.gather(*(one(s, k) for k in keys for s in MARKETS[k].stocks if not only or s == only))}
 
 
 # ── live paper trading during market hours ───────────────────────────────────
@@ -243,7 +246,7 @@ def _live_state(key: str) -> dict | None:
     return snap.to_dict() if snap.exists else None
 
 
-_last_live = 0.0   # when the last live check ran (monotonic), so the page can't check more often than the cron
+_last_live = 0.0   # when the last all-stocks check ran (monotonic), so opening the page can't add to the cron's
 PAGE_CHECK_AFTER_S = 240
 
 
@@ -256,8 +259,8 @@ async def live_tick() -> dict:
 
 @router.post("/live/check", dependencies=[Depends(require_user)])
 async def live_check_now() -> dict:
-    """The page opened during market hours: check now unless a check ran in the last 4 minutes.
-    Still only open markets, so it never asks for prices outside trading hours."""
+    """The page opened during market hours: check all stocks now unless that ran in the last 4 minutes.
+    Only open markets, so never outside trading hours."""
     if time.monotonic() - _last_live < PAGE_CHECK_AFTER_S or not any(live.is_open(k) for k in MARKETS):
         return await live_view()
     await _live_tick()
@@ -288,6 +291,32 @@ async def _live_tick() -> dict:
         except Exception:
             log.exception("Couldn't send the Trading Lab live update")
     return {"ok": True, **out}
+
+
+@router.post("/live/stock/{symbol}", dependencies=[Depends(require_user)])
+async def live_stock(symbol: str) -> dict:
+    """The stock on screen, refreshed every minute while the page is open: one request for this one stock,
+    at most once every 55 seconds, and only while its market is open. Returns its chart data and tile."""
+    symbol = symbol.upper()
+    key = next((k for k, m in MARKETS.items() if symbol in m.stocks), None)
+    cfg = _config()
+    if not key or not cfg:
+        raise HTTPException(404, "That stock isn't in the lab.")
+    state = _live_state(key) or {}
+    if live.is_open(key):
+        state, lines, fetched = await live.check_one(key, symbol, state, cfg["pots"][key].get(symbol, RULES.pot))
+        if fetched:
+            _live_ref(key).set(state)
+        if lines:
+            try:
+                await telegram.send("📈 Trading Lab, live (paper money)\n" + "\n".join(lines))
+            except Exception:
+                log.exception("Couldn't send the Trading Lab live update")
+    day = live.session_date(key)
+    out = await _replay_live(day, only=symbol)
+    stock = next((s for s in (out or {}).get("stocks", []) if s["symbol"] == symbol), None)
+    return {"stock": stock, "tile": (state.get("stocks") or {}).get(symbol), "checkedAt": state.get("checkedAt"),
+            "open": live.is_open(key)}
 
 
 @router.get("/live", dependencies=[Depends(require_user)])

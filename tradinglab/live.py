@@ -11,6 +11,7 @@ live=True), so the buy and sell minutes are exact; the check just reports them w
 Nothing here stores trades: the end-of-day replay (jarvis_api.process) saves the day's money.
 """
 
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -19,7 +20,9 @@ from .engine import simulate_day
 from .rules import MARKETS, RULES
 
 HOLIDAY_AFTER_MINUTES = 10
+ONE_STOCK_EVERY_S = 55               # the stock on screen is fetched at most this often
 _today: dict[str, list[dict]] = {}   # symbol -> today's candles from the last check (for the chart)
+_fetched_at: dict[str, float] = {}   # symbol -> when its candles were last fetched (monotonic)
 
 
 def market_now(key: str) -> datetime:
@@ -52,6 +55,12 @@ def candles_today(symbol: str) -> list[dict] | None:
     return _today.get(symbol)
 
 
+def remember(symbol: str, candles: list[dict]) -> None:
+    """Keep candles fetched outside a check (after a restart), so they aren't fetched again right away."""
+    _today[symbol] = candles
+    _fetched_at[symbol] = time.monotonic()
+
+
 async def check(key: str, state: dict, pots: dict[str, float]) -> tuple[dict, list[str]]:
     """One check of an open market. `state` is the market's live record from the last check (or {}).
     -> (the new record, Telegram lines for trades that happened since the last check)."""
@@ -80,21 +89,52 @@ async def check(key: str, state: dict, pots: dict[str, float]) -> tuple[dict, li
             state["holiday"] = True
         return state, []
 
-    lines = []
-    sym = "₹" if m.currency == "INR" else "$"
+    lines: list[str] = []
     for s, candles in fetched.items():
-        _today[s] = candles
-        r = simulate_day(key, candles, pots.get(s, RULES.pot), live=True)
-        t = r["trade"]
-        prev = state["stocks"].get(s, {}).get("state")
-        rec = {"state": r["state"], "note": r["note"], "pnl": r["pnl"], "price": candles[-1]["close"] if candles else None,
-               "time": candles[-1]["date"][11:16] if candles else None, "range": r["range"],
-               "done": r["state"] in ("sold", "no_trade"), "trade": t}
-        state["stocks"][s] = rec
-        if t and prev not in ("holding", "sold"):
-            lines.append(f"🟢 Bought {s} at {t['buyTime']}: {sym}{t['buyPrice']:,.2f} ({t['reason']})")
-        if r["state"] == "sold" and prev != "sold":
-            lines.append(f"{'✅' if r['pnl'] > 0 else '🔻'} Sold {s} at {t['sellTime']}: {sym}{t['sellPrice']:,.2f}, "
-                         f"{t['exit']}. Result {'+' if r['pnl'] >= 0 else '−'}{sym}{abs(r['pnl']):,.2f}")
+        _update(key, s, candles, pots.get(s, RULES.pot), state, lines)
     state["checkedAt"] = now.strftime("%H:%M")
     return state, lines
+
+
+def _update(key: str, s: str, candles: list[dict], pot: float, state: dict, lines: list[str]) -> None:
+    """Replay one stock's candles so far into the market's live record; note a new buy or sell for Telegram."""
+    _today[s] = candles
+    _fetched_at[s] = time.monotonic()
+    r = simulate_day(key, candles, pot, live=True)
+    t = r["trade"]
+    prev = state["stocks"].get(s, {}).get("state")
+    state["stocks"][s] = {"state": r["state"], "note": r["note"], "pnl": r["pnl"],
+                          "price": candles[-1]["close"] if candles else None,
+                          "time": candles[-1]["date"][11:16] if candles else None, "range": r["range"],
+                          "done": r["state"] in ("sold", "no_trade"), "trade": t}
+    sym = "₹" if MARKETS[key].currency == "INR" else "$"
+    if t and prev not in ("holding", "sold"):
+        lines.append(f"🟢 Bought {s} at {t['buyTime']}: {sym}{t['buyPrice']:,.2f} ({t['reason']})")
+    if r["state"] == "sold" and prev != "sold":
+        lines.append(f"{'✅' if r['pnl'] > 0 else '🔻'} Sold {s} at {t['sellTime']}: {sym}{t['sellPrice']:,.2f}, "
+                     f"{t['exit']}. Result {'+' if r['pnl'] >= 0 else '−'}{sym}{abs(r['pnl']):,.2f}")
+
+
+async def check_one(key: str, symbol: str, state: dict, pot: float) -> tuple[dict, list[str], bool]:
+    """Refresh just one stock (the one on screen) if its market is open and it wasn't fetched in the last
+    55 seconds. -> (record, Telegram lines, whether a request was made)."""
+    day = session_date(key)
+    if state.get("day") != day:
+        state = {"day": day, "stocks": {}, "holiday": False, "stopped": ""}
+    if not is_open(key) or state["holiday"] or state["stopped"]:
+        return state, [], False
+    if state["stocks"].get(symbol, {}).get("done"):   # sold, or too late to buy: its trade can't change today
+        return state, [], False
+    if time.monotonic() - _fetched_at.get(symbol, 0.0) < ONE_STOCK_EVERY_S:
+        return state, [], False
+    try:
+        candles = await data.day(symbol, day, finished=False)
+    except data.DataError as e:
+        state["stopped"] = str(e)
+        return state, [f"⏸ {MARKETS[key].name} live checks stopped for today: {e}"], True
+    lines: list[str] = []
+    if candles:
+        _update(key, symbol, candles, pot, state, lines)
+    else:
+        _fetched_at[symbol] = time.monotonic()
+    return state, lines, True

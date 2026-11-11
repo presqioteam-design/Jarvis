@@ -48,6 +48,9 @@ export const getDay = (date: string) => call<DayReplay>(`/tradinglab/day/${date}
 export const getLive = () => call<LiveView>("/tradinglab/live");
 /** Run a live check now if the last is over 4 minutes old (only open markets); returns the live view. */
 export const checkLiveNow = () => call<LiveView>("/tradinglab/live/check", {});
+/** The stock on screen, refreshed (one request at most every 55 s, only while its market is open). */
+export const refreshStock = (symbol: string) =>
+  call<{ stock: StockReplay | null; tile: LiveStock | null; checkedAt?: string; open: boolean }>(`/tradinglab/live/stock/${symbol}`, {});
 
 /** True when the stock's day loaded (it has candles), false when the server sent an error instead. */
 export const loaded = (s: StockReplay): s is Extract<StockReplay, { candles: Candle[] }> => "candles" in s;

@@ -127,3 +127,15 @@
 .pill.tl-st-sold { background: rgba(52, 211, 153, .14); color: var(--tl-up); }
 .pill.tl-st-watching, .pill.tl-st-range { background: rgba(245, 165, 36, .12); color: var(--c-interested); }
 @media (prefers-reduced-motion: reduce) { .tl-now-dot, .tl-live-dot { animation: none; } }
+
+/* live chart: the current price line and its tag; tiles flash when a price moves */
+.tl-last-line { stroke: var(--text); stroke-width: 1; stroke-dasharray: 2 3; opacity: .55; }
+.tl-last-up rect { fill: var(--tl-candle-up); }
+.tl-last-down rect { fill: var(--tl-candle-down); }
+.tl-last-up text, .tl-last-down text { fill: #fff; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tl-live-tag { font-size: 11px; color: var(--accent); }
+.tl-live-stock { transition: border-color .15s, background-color .6s; }
+.tl-flash-up { background-color: rgba(38, 166, 154, .22) !important; }
+.tl-flash-down { background-color: rgba(239, 83, 80, .22) !important; }
+.tl-price { font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .tl-live-stock { transition: none; } }
