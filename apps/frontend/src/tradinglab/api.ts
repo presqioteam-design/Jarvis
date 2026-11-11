@@ -19,7 +19,7 @@ export type DayRecord = { date: string; markets: Partial<Record<MarketKey, Marke
 
 type Base = { rules: Rules; markets: Record<MarketKey, MarketInfo>; configured: boolean; defaultStart: string; minStart: string; busy: boolean; error: string;
   priceCallsToday: number; lastClosed: Record<MarketKey, string> };
-export type LabView = (Base & { started: false }) | (Base & { started: true; config: Config; days: DayRecord[] });
+export type LabView = (Base & { started: false }) | (Base & { started: true; config: Config; days: DayRecord[]; strategy?: Record<MarketKey, string> });
 
 export type Candle = { time: string; open: number; high: number; low: number; close: number; volume: number };
 /** A trade. While it's still held (today, live), sellTime/sellPrice are null and open/last/stop say where it stands. */

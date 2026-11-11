@@ -70,9 +70,11 @@ async def newest_finished(market: str) -> str | None:
 
 
 async def replay_day(market: str, day: str, pots: dict[str, float], rules: Rules = RULES) -> dict[str, dict] | None:
-    """Every stock of one market on one day -> {symbol: simulate_day result}; None if the market was closed."""
+    """Every stock of one market on one day -> {symbol: simulate_day result}; None if the market was closed.
+    Rules that watch the market's direction also get the benchmark's candles (one more request)."""
     m = MARKETS[market]
     candles = await asyncio.gather(*(data.day(s, day) for s in m.stocks))
     if not any(candles):
         return None
-    return {s: simulate_day(market, c, pots.get(s, rules.pot), rules) for s, c in zip(m.stocks, candles)}
+    bench = await data.day(m.benchmark, day) if rules.market_up else None
+    return {s: simulate_day(market, c, pots.get(s, rules.pot), rules, bench=bench) for s, c in zip(m.stocks, candles)}

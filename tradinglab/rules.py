@@ -37,12 +37,26 @@ class Rules:
     breakeven_at_pct: float = 0.0    # once up this much, the stop moves to the buy price (that trade can't lose much)
     trail_atr_mult: float = 0.0      # trailing stop at least this many ATRs (a stock's usual 1-minute move) behind the best
     max_losses_per_day: int = 0      # stop buying in a market after this many losing trades that day
+    target_pct: float = 0.0          # sell as soon as the price is this much over the buy price (a fixed profit target)
+    breakout_pct: float = 0.0        # buy only on a clear breakout: a close this much above the range high
 
     def as_dict(self) -> dict:
         return asdict(self)
 
 
 RULES = Rules()
+
+# Named rule sets the live lab can run, per market (chosen with the strategy tester's help).
+STRATEGIES: dict[str, tuple[str, Rules]] = {
+    "current": ("Current rules", RULES),
+    "filters": ("Filters combined (volume + above VWAP + market up)",
+                Rules(min_volume_mult=1.5, above_vwap=True, market_up=True)),
+}
+DEFAULT_STRATEGY = {"IN": "current", "US": "filters"}   # from the 6-month test: filters helped the US in both periods
+
+
+def strategy(key: str | None) -> tuple[str, Rules]:
+    return STRATEGIES.get(key or "current", STRATEGIES["current"])
 
 
 @dataclass(frozen=True)

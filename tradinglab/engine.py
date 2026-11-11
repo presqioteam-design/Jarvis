@@ -96,7 +96,7 @@ def simulate_day(market: str, candles: list[dict], pot: float, rules: Rules = RU
     for i, c in enumerate(rest[:-1]):
         if _t(rest[i + 1]) >= last_entry:
             break
-        if c["close"] > hi:
+        if c["close"] > hi * (1 + rules.breakout_pct / 100):
             why_not = _filters_pass(rules, candles, offset + i, bench_map, bench_open) if (
                 rules.min_volume_mult or rules.above_vwap or rules.market_up) else ""
             if why_not:
@@ -130,10 +130,17 @@ def simulate_day(market: str, candles: list[dict], pot: float, rules: Rules = RU
             exit_c, exit_price = c, c["open"]
             why = "trailing stop (price opened under it)" if trailing else "stop loss (price opened under it)"
             break
+        target = price * (1 + rules.target_pct / 100) if rules.target_pct else None
+        if target and c["open"] >= target:
+            exit_c, exit_price, why = c, c["open"], f"profit target (opened above +{rules.target_pct:g}%)"
+            break
         if c["low"] <= stop:
             exit_c, exit_price = c, stop
             why = (f"trailing stop: fell {(best - stop) / best * 100:.2f}% from the best price of {best:,.2f}" if trailing
                    else f"break-even stop at {stop:,.2f}" if stop >= price else f"stop loss at {stop:,.2f}")
+            break
+        if target and c["high"] >= target:   # checked after the stop: if a minute touched both, count the stop
+            exit_c, exit_price, why = c, target, f"profit target at +{rules.target_pct:g}%"
             break
         best = max(best, c["high"])
         if rules.breakeven_at_pct and best >= price * (1 + rules.breakeven_at_pct / 100):

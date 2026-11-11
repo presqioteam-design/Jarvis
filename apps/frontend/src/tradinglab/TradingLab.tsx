@@ -187,7 +187,20 @@ function Running({ lab, busy, onRestart }: { lab: Started; busy: boolean; onRest
 
       <section className="card">
         <div className="card-head"><h2>The rules</h2></div>
+        {lab.strategy && (
+          <div className="tl-stocklist">
+            {MARKET_ORDER.map((k) => (
+              <div key={k}><span className="muted small">{markets[k].name} runs</span><div>{lab.strategy![k]}</div></div>
+            ))}
+          </div>
+        )}
         <RulesList rules={lab.rules} />
+        {lab.strategy && Object.values(lab.strategy).some((n) => n.startsWith("Filters")) && (
+          <p className="muted small tl-pad">
+            "Filters combined" adds three checks before a buy: the breakout minute's volume is at least 1.5× the day's average,
+            the price is above VWAP, and the market (NIFTYBEES / SPY) is above its opening price. Chosen with the strategy test below.
+          </p>
+        )}
         <details className="tl-restart">
           <summary>Start over from another date</summary>
           <StartForm label="Start over" defaultDate={config.startDate} minDate={lab.minStart} busy={busy || lab.busy} onStart={onRestart}

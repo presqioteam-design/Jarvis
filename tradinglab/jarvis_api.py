@@ -25,7 +25,7 @@ from app.timeutil import now_utc
 from . import data, live
 from .engine import candles_every, simulate_day
 from .lab import last_closed_session, newest_available, replay_day, weekdays
-from .rules import MARKETS, RULES
+from .rules import DEFAULT_STRATEGY, MARKETS, RULES, STRATEGIES, strategy
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/tradinglab", tags=["tradinglab"])
@@ -45,6 +45,19 @@ def _config() -> dict | None:
     snap = _cfg_ref().get()
     cfg = snap.to_dict() if snap.exists else None
     return cfg if cfg and cfg.get("version") == VERSION else None
+
+
+def strategy_key(cfg: dict, key: str, day: str | None = None) -> str:
+    """The rule set a market runs (on `day`, if given): sessions before the market's switch date keep the
+    rules they ran with."""
+    since = (cfg.get("strategySince") or {}).get(key)
+    if day and since and day < since:
+        return "current"
+    return (cfg.get("strategy") or {}).get(key, "current")
+
+
+def rules_for(cfg: dict, key: str, day: str | None = None):
+    return strategy(strategy_key(cfg, key, day))[1]
 
 
 def busy() -> bool:
@@ -76,7 +89,7 @@ async def process(notify: bool = False) -> list[str]:
                     continue
                 for day in weekdays(first, newest)[:MAX_DAYS_PER_RUN]:
                     pots = cfg["pots"][key]
-                    res = await replay_day(key, day, pots)
+                    res = await replay_day(key, day, pots, rules_for(cfg, key, day))
                     if res is not None:
                         lines.append(_save_day(cfg, key, day, res))
                     cfg["progress"][key] = day
@@ -109,7 +122,7 @@ def _save_day(cfg: dict, key: str, day: str, res: dict) -> str:
         wins += r["pnl"] > 0
     t.update(pnl=round(t["pnl"] + pnl, 2), withdrawn=round(t["withdrawn"] + withdrawn, 2),
              trades=t["trades"] + trades, wins=t["wins"] + wins, days=t["days"] + 1)
-    summary = {"currency": m.currency, "pnl": round(pnl, 2), "withdrawn": round(withdrawn, 2), "trades": trades, "wins": wins,
+    summary = {"currency": m.currency, "strategy": strategy_key(cfg, key, day), "pnl": round(pnl, 2), "withdrawn": round(withdrawn, 2), "trades": trades, "wins": wins,
                "pots": round(sum(cfg["pots"][key].values()), 2), "cumPnl": t["pnl"], "cumWithdrawn": t["withdrawn"]}
     col("tradinglab_days").document(day).set({"date": day, "markets": {key: summary}, "stocks": stocks}, merge=True)
     sym = "₹" if m.currency == "INR" else "$"
@@ -143,7 +156,8 @@ async def view() -> dict:
     if not cfg:
         return {**base, "started": False}
     days = sorted((d.to_dict() for d in col("tradinglab_days").stream()), key=lambda d: d["date"])
-    return {**base, "started": True, "config": cfg, "days": days}
+    names = {k: STRATEGIES[strategy_key(cfg, k)][0] for k in MARKETS}
+    return {**base, "started": True, "config": cfg, "days": days, "strategy": names}
 
 
 class StartIn(BaseModel):
@@ -173,6 +187,7 @@ async def start(body: StartIn) -> dict:
         "version": VERSION, "startDate": day.isoformat(), "potPerStock": RULES.pot, "startedAt": now_utc().isoformat(),
         "pots": {k: {s: RULES.pot for s in m.stocks} for k, m in MARKETS.items()},
         "totals": {k: _blank_totals() for k in MARKETS}, "progress": {},
+        "strategy": dict(DEFAULT_STRATEGY), "strategySince": {},
     })
     _kick()
     return await view()
@@ -193,7 +208,16 @@ async def _replay(day: str) -> dict | None:
     snap = col("tradinglab_days").document(day).get()
     if not snap.exists:
         return await _replay_live(day)
-    stocks = snap.to_dict().get("stocks", {})
+    rec = snap.to_dict()
+    stocks = rec.get("stocks", {})
+    used = {k: strategy(md.get("strategy"))[1] for k, md in rec.get("markets", {}).items()}   # the rules that day ran
+    bench: dict[str, list[dict] | None] = {}
+    for k, r in used.items():
+        if r.market_up:
+            try:
+                bench[k] = await data.day(MARKETS[k].benchmark, day)
+            except data.DataError:
+                bench[k] = None
 
     async def one(symbol: str, saved: dict) -> dict:
         key = saved["market"]
@@ -201,7 +225,7 @@ async def _replay(day: str) -> dict | None:
             candles = await data.day(symbol, day)
         except data.DataError as e:
             return {"symbol": symbol, "market": key, "error": str(e)}
-        r = simulate_day(key, candles, saved["potStart"])
+        r = simulate_day(key, candles, saved["potStart"], used.get(key, RULES), bench=bench.get(key))
         return {"symbol": symbol, "market": key, "currency": MARKETS[key].currency, "candles": candles_every(candles, 1),
                 "range": r["range"], "trade": r["trade"], "note": r["note"], "pnl": r["pnl"], "potStart": r["potStart"]}
 
@@ -226,7 +250,8 @@ async def _replay_live(day: str, only: str | None = None) -> dict | None:
             except data.DataError as e:
                 return {"symbol": symbol, "market": key, "error": str(e)}
         pot = cfg["pots"][key].get(symbol, RULES.pot)
-        r = simulate_day(key, candles, pot, live=True)
+        rules = rules_for(cfg, key)
+        r = simulate_day(key, candles, pot, rules, live=True, bench=live.candles_today(MARKETS[key].benchmark) if rules.market_up else None)
         return {"symbol": symbol, "market": key, "currency": MARKETS[key].currency, "candles": candles_every(candles, 1),
                 "range": r["range"], "trade": r["trade"], "note": r["note"], "pnl": r["pnl"], "potStart": pot,
                 "state": r["state"], "live": True}
@@ -276,7 +301,7 @@ async def _live_tick() -> dict:
     out, lines = {}, []
     for key, m in MARKETS.items():
         if live.is_open(key):
-            state, said = await live.check(key, _live_state(key) or {}, cfg["pots"][key])
+            state, said = await live.check(key, _live_state(key) or {}, cfg["pots"][key], rules_for(cfg, key))
             _live_ref(key).set(state)
             lines += said
             out[key] = "holiday" if state.get("holiday") else f"checked {state.get('checkedAt', '')}"
@@ -304,7 +329,7 @@ async def live_stock(symbol: str) -> dict:
         raise HTTPException(404, "That stock isn't in the lab.")
     state = _live_state(key) or {}
     if live.is_open(key):
-        state, lines, fetched = await live.check_one(key, symbol, state, cfg["pots"][key].get(symbol, RULES.pot))
+        state, lines, fetched = await live.check_one(key, symbol, state, cfg["pots"][key].get(symbol, RULES.pot), rules_for(cfg, key))
         if fetched:
             _live_ref(key).set(state)
         if lines:
@@ -381,6 +406,7 @@ def briefing() -> str:
         return "TRADING LAB (paper money): not started. The admin starts it on the Trading Lab page."
     days = sorted((d.to_dict() for d in col("tradinglab_days").stream()), key=lambda d: d["date"])
     lines = [f"TRADING LAB (paper money, day trading 10 stocks with 1,000 each in their own currency; started {cfg['startDate']}):"]
+    lines.append("- Rules now: " + "; ".join(f"{m.name}: {STRATEGIES[strategy_key(cfg, k)][0]}" for k, m in MARKETS.items()))
     for k, m in MARKETS.items():
         t, pots = cfg["totals"][k], cfg["pots"][k]
         start = RULES.pot * len(m.stocks)

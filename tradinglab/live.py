@@ -87,7 +87,18 @@ def remember(symbol: str, candles: list[dict]) -> None:
     _fetched_at[symbol] = time.monotonic()
 
 
-async def check(key: str, state: dict, pots: dict[str, float]) -> tuple[dict, list[str]]:
+async def _bench(key: str, rules, day: str) -> list[dict] | None:
+    """The market's benchmark candles today, for rules that watch the market's direction; fetched at most
+    once a minute (one request), else None."""
+    if not rules.market_up:
+        return None
+    b = MARKETS[key].benchmark
+    if b not in _today or time.monotonic() - _fetched_at.get(b, 0.0) >= ONE_STOCK_EVERY_S:
+        remember(b, await data.day(b, day, finished=False))
+    return _today[b]
+
+
+async def check(key: str, state: dict, pots: dict[str, float], rules=RULES) -> tuple[dict, list[str]]:
     """One check of an open market. `state` is the market's live record from the last check (or {}).
     -> (the new record, Telegram lines for trades that happened since the last check)."""
     m = MARKETS[key]
@@ -115,17 +126,21 @@ async def check(key: str, state: dict, pots: dict[str, float]) -> tuple[dict, li
         return state, []
 
     lines: list[str] = []
+    try:
+        bench = await _bench(key, rules, day)
+    except data.DataError as e:
+        return _refused(key, state, e), [_refused_line(key, state, e)] if _first_refusal(state, e) else []
     for s, candles in fetched.items():
-        _update(key, s, candles, pots.get(s, RULES.pot), state, lines)
+        _update(key, s, candles, pots.get(s, RULES.pot), state, lines, rules, bench)
     state["checkedAt"] = now.strftime("%H:%M")
     return state, lines
 
 
-def _update(key: str, s: str, candles: list[dict], pot: float, state: dict, lines: list[str]) -> None:
+def _update(key: str, s: str, candles: list[dict], pot: float, state: dict, lines: list[str], rules=RULES, bench=None) -> None:
     """Replay one stock's candles so far into the market's live record; note a new buy or sell for Telegram."""
     _today[s] = candles
     _fetched_at[s] = time.monotonic()
-    r = simulate_day(key, candles, pot, live=True)
+    r = simulate_day(key, candles, pot, rules, live=True, bench=bench)
     t = r["trade"]
     prev = state["stocks"].get(s, {}).get("state")
     state["stocks"][s] = {"state": r["state"], "note": r["note"], "pnl": r["pnl"],
@@ -140,7 +155,7 @@ def _update(key: str, s: str, candles: list[dict], pot: float, state: dict, line
                      f"{t['exit']}. Result {'+' if r['pnl'] >= 0 else '−'}{sym}{abs(r['pnl']):,.2f}")
 
 
-async def check_one(key: str, symbol: str, state: dict, pot: float) -> tuple[dict, list[str], bool]:
+async def check_one(key: str, symbol: str, state: dict, pot: float, rules=RULES) -> tuple[dict, list[str], bool]:
     """Refresh just one stock (the one on screen) if its market is open and it wasn't fetched in the last
     55 seconds. -> (record, Telegram lines, whether a request was made)."""
     day = session_date(key)
@@ -154,12 +169,13 @@ async def check_one(key: str, symbol: str, state: dict, pot: float) -> tuple[dic
         return state, [], False
     try:
         candles = await data.day(symbol, day, finished=False)
+        bench = await _bench(key, rules, day)
     except data.DataError as e:
         lines = [_refused_line(key, state, e)] if _first_refusal(state, e) else []
         return _refused(key, state, e), lines, True
     lines: list[str] = []
     if candles:
-        _update(key, symbol, candles, pot, state, lines)
+        _update(key, symbol, candles, pot, state, lines, rules, bench)
     else:
         _fetched_at[symbol] = time.monotonic()
     return state, lines, True
