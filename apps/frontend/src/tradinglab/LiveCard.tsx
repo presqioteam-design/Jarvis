@@ -39,6 +39,8 @@ export default function LiveCard({ lab }: { lab: Started }) {
 
   const openKey = live ? (Object.keys(live.markets) as MarketKey[]).find((k) => live.markets[k].open) : undefined;
   const openMarket = openKey ? live!.markets[openKey] : undefined;
+  // a stock that has sold, or can't buy any more today, won't change: no refreshing it (the server wouldn't fetch it anyway)
+  const selDone = !!(symbol && openMarket?.state?.stocks?.[symbol]?.done);
 
   // tiles flash green or red when a price moves
   const notePrices = (stocks: Record<string, LiveStock> | undefined) => {
@@ -71,7 +73,7 @@ export default function LiveCard({ lab }: { lab: Started }) {
 
   // the stock on screen: load now, then once a minute while visible and its market is open
   useEffect(() => {
-    if (!symbol || !openMarket) return;
+    if (!symbol || !openMarket || selDone) return;
     let stop = false;
     const tick = () => {
       refreshStock(symbol).then((r) => {
@@ -93,7 +95,7 @@ export default function LiveCard({ lab }: { lab: Started }) {
     const t = setInterval(tick, EVERY_S * 1000);
     const c = setInterval(() => setLeft((n) => Math.max(0, n - 1)), 1000);
     return () => { stop = true; clearInterval(t); clearInterval(c); };
-  }, [symbol, visible, openKey]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [symbol, visible, openKey, selDone]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // after the markets close: a slow look every 5 minutes is enough (the server saves the day itself)
   useEffect(() => {
@@ -120,7 +122,10 @@ export default function LiveCard({ lab }: { lab: Started }) {
       <div className="card-head">
         <h2>{anyOpen && <span className="tl-live-dot" aria-hidden="true" />}Live now</h2>
         <span className="muted small">
-          {anyOpen ? (visible ? `${symbol ?? "Chart"} updates in ${left}s · other stocks every 5 min` : "Paused while this tab is hidden") : "Paper money"}
+          {anyOpen
+            ? selDone ? `${symbol} is finished for today · not updating · other stocks every 5 min`
+              : visible ? `${symbol ?? "Chart"} updates in ${left}s · other stocks every 5 min` : "Paused while this tab is hidden"
+            : "Paper money"}
         </span>
       </div>
       <div className="tl-live-markets small">
