@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import CandleChart from "./CandleChart";
-import { getDay, getLive, loaded, type DayReplay, type LabView, type LiveState, type LiveView, type MarketKey } from "./api";
+import { checkLiveNow, getDay, getLive, loaded, type DayReplay, type LabView, type LiveState, type LiveView, type MarketKey } from "./api";
 import { price, signed, tone } from "./format";
 
 type Started = Extract<LabView, { started: true }>;
@@ -20,7 +20,8 @@ export default function LiveCard({ lab }: { lab: Started }) {
   useEffect(() => {
     let stop = false;
     const load = () => getLive().then((v) => { if (!stop) setLive(v); }).catch(() => undefined);
-    load();
+    // on opening the page: a market that's open but not checked recently gets checked now
+    checkLiveNow().then((v) => { if (!stop) setLive(v); }).catch(load);
     const t = setInterval(load, REFRESH_MS);
     return () => { stop = true; clearInterval(t); };
   }, []);

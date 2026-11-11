@@ -11,6 +11,7 @@ Trades aren't stored: a day's trades are replayed from its candles and the pots 
 
 import asyncio
 import logging
+import time
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -242,10 +243,30 @@ def _live_state(key: str) -> dict | None:
     return snap.to_dict() if snap.exists else None
 
 
+_last_live = 0.0   # when the last live check ran (monotonic), so the page can't check more often than the cron
+PAGE_CHECK_AFTER_S = 240
+
+
 @router.post("/live", dependencies=[Depends(require_cron)])
 async def live_tick() -> dict:
     """Cron, every 5 minutes on weekdays. Checks only markets that are open right now; just after a close
     it saves that session's money. Outside trading hours it returns without asking FMP for anything."""
+    return await _live_tick()
+
+
+@router.post("/live/check", dependencies=[Depends(require_user)])
+async def live_check_now() -> dict:
+    """The page opened during market hours: check now unless a check ran in the last 4 minutes.
+    Still only open markets, so it never asks for prices outside trading hours."""
+    if time.monotonic() - _last_live < PAGE_CHECK_AFTER_S or not any(live.is_open(k) for k in MARKETS):
+        return await live_view()
+    await _live_tick()
+    return await live_view()
+
+
+async def _live_tick() -> dict:
+    global _last_live
+    _last_live = time.monotonic()
     cfg = _config()
     if not cfg:
         return {"ok": True, "lab": "not started"}

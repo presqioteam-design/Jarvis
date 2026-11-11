@@ -46,6 +46,8 @@ export const startLab = (startDate: string) => call<LabView>("/tradinglab/start"
 export const refreshLab = () => call<LabView>("/tradinglab/refresh", {});
 export const getDay = (date: string) => call<DayReplay>(`/tradinglab/day/${date}`);
 export const getLive = () => call<LiveView>("/tradinglab/live");
+/** Run a live check now if the last is over 4 minutes old (only open markets); returns the live view. */
+export const checkLiveNow = () => call<LiveView>("/tradinglab/live/check", {});
 
 /** True when the stock's day loaded (it has candles), false when the server sent an error instead. */
 export const loaded = (s: StockReplay): s is Extract<StockReplay, { candles: Candle[] }> => "candles" in s;

@@ -257,7 +257,7 @@ function DayCard({ days, date, onPick, note, lab, symbol, setSymbol }: {
           </div>
         </div>
       </div>
-      <p className="muted small tl-note">Times are the exchange's own (IST for NSE, New York time for US)</p>
+      <p className="muted small tl-note">Finished days. Times are the exchange's own (IST for NSE, New York time for US). Today's trades are in Live now above while a market is open; they're saved here right after the close.</p>
       {note && <p className="muted small tl-note">{note}</p>}
 
       {error && <p className="error">{error}</p>}
