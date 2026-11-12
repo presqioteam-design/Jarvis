@@ -34,6 +34,17 @@ VARIANTS: list[tuple[str, str, str, Rules]] = [
     ("wide", "+ 1.5% trailing stop", "Trailing stop 1.5% behind the best price instead of 0.5%", dataclasses.replace(RULES, trail_pct=1.5)),
     ("losses", "+ Max 2 losses a day", "Stop buying in a market after 2 losing trades that day", dataclasses.replace(RULES, max_losses_per_day=2)),
     ("filters", "Filters combined", "Volume check + above VWAP + market up", dataclasses.replace(RULES, min_volume_mult=1.5, above_vwap=True, market_up=True)),
+    # exit ideas on top of the filters (what the US live lab runs), for trades that rise but never reach +1%
+    ("f_be05", "Filters + break-even at 0.5%", "Filters combined; once up 0.5%, the stop moves up to the buy price",
+     dataclasses.replace(RULES, min_volume_mult=1.5, above_vwap=True, market_up=True, breakeven_at_pct=0.5)),
+    ("f_trail05", "Filters + trail from +0.5%", "Filters combined; the 0.5% trailing stop switches on at +0.5% instead of +1%",
+     dataclasses.replace(RULES, min_volume_mult=1.5, above_vwap=True, market_up=True, trail_after_pct=0.5)),
+    ("f_t08", "Filters + 0.8% target", "Filters combined; sell as soon as the price is 0.8% over the buy",
+     dataclasses.replace(RULES, min_volume_mult=1.5, above_vwap=True, market_up=True, target_pct=0.8)),
+    ("f_t15", "Filters + 1.5% target", "Filters combined; sell as soon as the price is 1.5% over the buy",
+     dataclasses.replace(RULES, min_volume_mult=1.5, above_vwap=True, market_up=True, target_pct=1.5)),
+    ("f_be05_trail05", "Filters + both early exits", "Filters combined; break-even at +0.5% and trailing from +0.5%",
+     dataclasses.replace(RULES, min_volume_mult=1.5, above_vwap=True, market_up=True, breakeven_at_pct=0.5, trail_after_pct=0.5)),
     ("exits", "Exits combined", "Break-even stop + ATR trailing stop", dataclasses.replace(RULES, breakeven_at_pct=0.7, trail_atr_mult=3.0)),
     ("all", "Everything", "All filters, both exits, buy before 11:00, max 2 losses a day",
      dataclasses.replace(RULES, min_volume_mult=1.5, above_vwap=True, market_up=True, latest_entry="11:00",
@@ -118,10 +129,10 @@ def show(res: dict) -> None:
     for k, m in MARKETS.items():
         sym = "₹" if m.currency == "INR" else "$"
         print(f"\n══ {m.name}: {res['sessions'][k]} sessions, {res['from']} to {res['to']} · 5 stocks × {sym}1,000 a trade ══")
-        print(f"{'':24}{'first ' + str(res['split'][k]['first']):>30}  {'last ' + str(res['split'][k]['last']):>30}   trades  win%  worst day  both?")
+        print(f"{'':30}{'first ' + str(res['split'][k]['first']):>30}  {'last ' + str(res['split'][k]['last']):>30}   trades  win%  worst day  both?")
         for r in res["variants"]:
             x = r["markets"][k]
-            print(f"{r['name']:24}{x['first']['pnl']:>+28.2f}  {x['last']['pnl']:>+31.2f}   {x['all']['trades']:>6}  {x['all']['winRate']:>4.0f}  {x['all']['worstDay']:>+9.2f}  "
+            print(f"{r['name']:30}{x['first']['pnl']:>+28.2f}  {x['last']['pnl']:>+31.2f}   {x['all']['trades']:>6}  {x['all']['winRate']:>4.0f}  {x['all']['worstDay']:>+9.2f}  "
                   f"{'✓' if x['beatsCurrentInBoth'] else ''}")
         best = next(r for r in res["variants"] if r["key"] == res["best"][k])
         print(f"→ best for {m.name}: {best['name']} ({best['about']})")
