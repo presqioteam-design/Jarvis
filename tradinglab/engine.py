@@ -62,7 +62,7 @@ def simulate_day(market: str, candles: list[dict], pot: float, rules: Rules = RU
     held (state "holding"), and no breakout yet only means "watching", not "no trade".
     state: "range" (first minutes), "watching", "holding", "sold", "no_trade", "closed"."""
     m = MARKETS[market]
-    out = {"range": None, "trade": None, "note": "", "pnl": 0.0, "withdrawn": 0.0, "potStart": _r(pot), "potEnd": _r(pot), "state": "no_trade"}
+    out = {"range": None, "trade": None, "trades": [], "note": "", "pnl": 0.0, "withdrawn": 0.0, "potStart": _r(pot), "potEnd": _r(pot), "state": "no_trade"}
     if not candles:
         out["note"], out["state"] = ("Waiting for the first prices", "range") if live else ("No trading that day", "closed")
         return out
@@ -89,22 +89,27 @@ def simulate_day(market: str, candles: list[dict], pot: float, rules: Rules = RU
     bench_map = {_t(b): b["close"] for b in bench} if bench else None
     bench_open = bench[0]["open"] if bench else None
     offset = len(candles) - len(rest)   # rest[i] is candles[offset + i]
-    blocked = ""
+    ctx = (rules, candles, offset, bench_map, bench_open)
 
-    # 1. find the breakout: a minute closing above the range high; buy at the next minute's open
-    entry_i = None
-    for i, c in enumerate(rest[:-1]):
-        if _t(rest[i + 1]) >= last_entry:
+    # one or more trades: buy, manage, sell; with max_trades > 1, buy again when the price turns back up
+    trades: list[dict] = []
+    blocked, start, cash = "", 0, pot
+    while len(trades) < rules.max_trades:
+        entry_i, reason, why_not = _find_entry(ctx, rest, start, hi, last_entry, again=bool(trades))
+        blocked = why_not or blocked
+        if entry_i is None:
             break
-        if c["close"] > hi * (1 + rules.breakout_pct / 100):
-            why_not = _filters_pass(rules, candles, offset + i, bench_map, bench_open) if (
-                rules.min_volume_mult or rules.above_vwap or rules.market_up) else ""
-            if why_not:
-                blocked = why_not
-                continue
-            entry_i = i + 1
+        invest = min(cash, pot)   # profit isn't reinvested the same day; a loss shrinks what's left
+        t, exit_i = _hold(market, ctx, rest, entry_i, invest, lo, exit_at, live, reason)
+        trades.append(t)
+        if t.get("open"):
             break
-    if entry_i is None:
+        cash += t["pnl"]
+        if (t["pnl"] < 0 and not rules.rebuy_after_loss) or exit_i is None or _t(rest[exit_i]) >= exit_at:
+            break
+        start = exit_i   # the minute it sold can already be the signal to buy again
+
+    if not trades:
         if live and (not rest or _t(rest[-1]) < last_entry):   # still time for a breakout today
             out["note"], out["state"] = f"Watching for a close above {hi:,.2f} (buys until {last_entry})", "watching"
             return out
@@ -112,6 +117,53 @@ def simulate_day(market: str, candles: list[dict], pot: float, rules: Rules = RU
                        f"No breakout: the price never closed above the opening-range high of {hi:,.2f} before {last_entry}")
         return out
 
+    pnl = sum(t["pnl"] for t in trades)
+    last = trades[-1]
+    out.update(trades=trades, trade=last, pnl=_r(pnl))
+    if last.get("open"):   # still holding: show where it stands now
+        out.update(state="holding", note=f"Holding; sells at {last['stop']:,.2f} or {exit_at}")
+        return out
+    more = (live and len(trades) < rules.max_trades and (last["pnl"] >= 0 or rules.rebuy_after_loss)
+            and _t(rest[-1]) < last_entry)
+    if more:   # sold, but it may buy again today
+        out.update(state="watching", note=f"{last['exit'][:1].upper()}{last['exit'][1:]}; watching to buy again until {last_entry}")
+        return out
+    out.update(withdrawn=_r(max(pnl, 0.0)), potEnd=_r(pot + min(pnl, 0.0)), state="sold",
+               note=last["exit"] if len(trades) == 1 else f"{len(trades)} trades; last: {last['exit']}")
+    return out
+
+
+def _find_entry(ctx, rest: list[dict], start: int, hi: float, last_entry: str, again: bool) -> tuple[int | None, str, str]:
+    """The next buy at or after rest[start]: (index of the minute bought at its open, why, why a signal was skipped).
+    First buy: a minute closes above the opening-range high. Again (after a sale): a minute closes above the
+    previous minute's high while still above the range, i.e. the price has turned back up."""
+    rules, candles, offset, bench_map, bench_open = ctx
+    blocked = ""
+    for i in range(max(start, 1 if again else 0), len(rest) - 1):
+        c = rest[i]
+        if _t(rest[i + 1]) >= last_entry:
+            break
+        if again:
+            signal = c["close"] > rest[i - 1]["high"] and c["close"] > hi
+        else:
+            signal = c["close"] > hi * (1 + rules.breakout_pct / 100)
+        if not signal:
+            continue
+        if (rules.min_volume_mult or rules.above_vwap or rules.market_up) and (not again or rules.rebuy_filters):
+            why_not = _filters_pass(rules, candles, offset + i, bench_map, bench_open)
+            if why_not:
+                blocked = why_not
+                continue
+        reason = (f"back up: closed {c['close']:,.2f} at {_t(c)}, above the previous minute's high of {rest[i - 1]['high']:,.2f}" if again
+                  else f"closed {c['close']:,.2f} at {_t(c)}, above the opening-range high of {hi:,.2f}")
+        return i + 1, reason, blocked
+    return None, "", blocked
+
+
+def _hold(market: str, ctx, rest: list[dict], entry_i: int, pot: float, lo: float, exit_at: str, live: bool, reason: str) -> tuple[dict, int | None]:
+    """Buy at rest[entry_i]'s open and manage the position minute by minute. -> (trade, index of the minute it sold;
+    None while still held)."""
+    rules, candles, offset, _, _ = ctx
     e = rest[entry_i]
     price = e["open"]
     buy_fee = charges(market, "buy", pot, pot / price, rules)
@@ -119,28 +171,31 @@ def simulate_day(market: str, candles: list[dict], pot: float, rules: Rules = RU
     stop = max(lo, price * (1 - rules.max_stop_pct / 100))
     best, trailing = price, False
     atr_gap = rules.trail_atr_mult * _atr(candles, offset + entry_i - 1) if rules.trail_atr_mult else 0.0
-    exit_c, exit_price, why = None, None, ""
+    exit_i, exit_price, why, sell_next = None, None, "", ""
 
-    # 2. manage the position minute by minute
-    for c in rest[entry_i:]:
+    for j in range(entry_i, len(rest)):
+        c = rest[j]
         if _t(c) >= exit_at:
-            exit_c, exit_price, why = c, c["open"], f"sold {rules.exit_before_close_minutes} min before the close"
+            exit_i, exit_price, why = j, c["open"], f"sold {rules.exit_before_close_minutes} min before the close"
+            break
+        if sell_next:   # decided on the last minute's close: sell at this one's open
+            exit_i, exit_price, why = j, c["open"], sell_next
             break
         if c["open"] <= stop:
-            exit_c, exit_price = c, c["open"]
+            exit_i, exit_price = j, c["open"]
             why = "trailing stop (price opened under it)" if trailing else "stop loss (price opened under it)"
             break
         target = price * (1 + rules.target_pct / 100) if rules.target_pct else None
         if target and c["open"] >= target:
-            exit_c, exit_price, why = c, c["open"], f"profit target (opened above +{rules.target_pct:g}%)"
+            exit_i, exit_price, why = j, c["open"], f"profit target (opened above +{rules.target_pct:g}%)"
             break
         if c["low"] <= stop:
-            exit_c, exit_price = c, stop
+            exit_i, exit_price = j, stop
             why = (f"trailing stop: fell {(best - stop) / best * 100:.2f}% from the best price of {best:,.2f}" if trailing
                    else f"break-even stop at {stop:,.2f}" if stop >= price else f"stop loss at {stop:,.2f}")
             break
         if target and c["high"] >= target:   # checked after the stop: if a minute touched both, count the stop
-            exit_c, exit_price, why = c, target, f"profit target at +{rules.target_pct:g}%"
+            exit_i, exit_price, why = j, target, f"profit target at +{rules.target_pct:g}%"
             break
         best = max(best, c["high"])
         if rules.breakeven_at_pct and best >= price * (1 + rules.breakeven_at_pct / 100):
@@ -148,32 +203,26 @@ def simulate_day(market: str, candles: list[dict], pot: float, rules: Rules = RU
         if best >= price * (1 + rules.trail_after_pct / 100):
             trailing = True
             stop = max(stop, best - max(best * rules.trail_pct / 100, atr_gap))   # ATR can only widen the trail
-    if exit_c is None and live:   # still holding: show where it stands now
+        # quick profit: once it has been up enough, sell when a minute turns down (while still in profit)
+        if rules.quick_exit_pct and best >= price * (1 + rules.quick_exit_pct / 100) and c["close"] > price * 1.001 and j > 0:
+            p = rest[j - 1]
+            turned = c["close"] < p["low"] if rules.quick_exit_on == "low" else c["close"] < p["close"]
+            if turned:
+                sell_next = (f"took the profit: up {(best / price - 1) * 100:.2f}% at best, then {_t(c)} closed "
+                             f"{c['close']:,.2f}, below the previous minute's {'low' if rules.quick_exit_on == 'low' else 'close'}")
+    base = {"buyTime": _t(e), "buyPrice": _r(price, 4), "qty": _r(qty, 4), "best": _r(best, 4), "reason": reason, "pot": _r(pot)}
+    if exit_i is None and live:   # still holding
         last = rest[-1]["close"]
         value = qty * last - charges(market, "sell", qty * last, qty, rules)
-        out.update(pnl=_r(value - pot), state="holding", note=f"Holding; sells at {stop:,.2f} or {exit_at}")
-        out["trade"] = {
-            "buyTime": _t(e), "buyPrice": _r(price, 4), "qty": _r(qty, 4), "sellTime": None, "sellPrice": None,
-            "best": _r(best, 4), "charges": _r(buy_fee), "pnl": _r(value - pot), "pnlPct": _r((value - pot) / pot * 100),
-            "reason": f"closed {rest[entry_i - 1]['close']:,.2f} at {_t(rest[entry_i - 1])}, above the opening-range high of {hi:,.2f}",
-            "exit": "", "open": True, "last": last, "lastTime": _t(rest[-1]), "stop": _r(stop, 4), "trailing": trailing,
-        }
-        return out
-    if exit_c is None:   # the data ended before the exit time (a short session)
-        exit_c, exit_price, why = rest[-1], rest[-1]["close"], "sold at the last price of the day"
-
+        return {**base, "sellTime": None, "sellPrice": None, "charges": _r(buy_fee), "pnl": _r(value - pot),
+                "pnlPct": _r((value - pot) / pot * 100), "exit": "", "open": True, "last": last, "lastTime": _t(rest[-1]),
+                "stop": _r(stop, 4), "trailing": trailing}, None
+    if exit_i is None:   # the data ended before the exit time (a short session)
+        exit_i, exit_price, why = len(rest) - 1, rest[-1]["close"], "sold at the last price of the day"
     sell_fee = charges(market, "sell", qty * exit_price, qty, rules)
-    proceeds = qty * exit_price - sell_fee
-    pnl = proceeds - pot
-    withdrawn = max(pnl, 0.0)
-    out.update(pnl=_r(pnl), withdrawn=_r(withdrawn), potEnd=_r(pot + min(pnl, 0.0)), note=why, state="sold")
-    out["trade"] = {
-        "buyTime": _t(e), "buyPrice": _r(price, 4), "qty": _r(qty, 4), "sellTime": _t(exit_c), "sellPrice": _r(exit_price, 4),
-        "best": _r(best, 4), "charges": _r(buy_fee + sell_fee), "pnl": _r(pnl), "pnlPct": _r(pnl / pot * 100),
-        "reason": f"closed {rest[entry_i - 1]['close']:,.2f} at {_t(rest[entry_i - 1])}, above the opening-range high of {hi:,.2f}",
-        "exit": why,
-    }
-    return out
+    pnl = qty * exit_price - sell_fee - pot
+    return {**base, "sellTime": _t(rest[exit_i]), "sellPrice": _r(exit_price, 4), "charges": _r(buy_fee + sell_fee),
+            "pnl": _r(pnl), "pnlPct": _r(pnl / pot * 100), "exit": why}, exit_i
 
 
 def candles_every(candles: list[dict], minutes: int = 5) -> list[dict]:

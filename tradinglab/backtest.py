@@ -20,7 +20,7 @@ from datetime import date, timedelta
 from . import history
 from .engine import simulate_day
 from .lab import weekdays
-from .rules import MARKETS, RULES, Rules
+from .rules import MARKETS, RULES, STRATEGIES, Rules
 
 VARIANTS: list[tuple[str, str, str, Rules]] = [
     ("current", "Current rules", "Opening-range breakout, 0.5% trailing stop (what the live lab uses)", RULES),
@@ -45,6 +45,13 @@ VARIANTS: list[tuple[str, str, str, Rules]] = [
      dataclasses.replace(RULES, min_volume_mult=1.5, above_vwap=True, market_up=True, target_pct=1.5)),
     ("f_be05_trail05", "Filters + both early exits", "Filters combined; break-even at +0.5% and trailing from +0.5%",
      dataclasses.replace(RULES, min_volume_mult=1.5, above_vwap=True, market_up=True, breakeven_at_pct=0.5, trail_after_pct=0.5)),
+    # several trades a day: take a quick profit when the price turns down, buy again when it turns back up
+    ("f_multi", "Filters on every buy, 3 trades", "Filters combined on every buy; once up 0.5%, sell when a minute closes below the last one's low; buy again when it turns up",
+     dataclasses.replace(RULES, min_volume_mult=1.5, above_vwap=True, market_up=True, max_trades=3, quick_exit_pct=0.5)),
+    ("f_trail07", "Filters + trail from +0.7%", "Filters combined; the trailing stop switches on at +0.7% instead of +1%",
+     dataclasses.replace(RULES, min_volume_mult=1.5, above_vwap=True, market_up=True, trail_after_pct=0.7)),
+    ("quick3", "Quick profits, up to 3 trades", "Filters on the first buy; once up 0.5%, sell on the first minute that closes lower; "
+     "buy again when a minute closes above the one before (max 3 a day)", STRATEGIES["quick3"][1]),
     ("exits", "Exits combined", "Break-even stop + ATR trailing stop", dataclasses.replace(RULES, breakeven_at_pct=0.7, trail_atr_mult=3.0)),
     ("all", "Everything", "All filters, both exits, buy before 11:00, max 2 losses a day",
      dataclasses.replace(RULES, min_volume_mult=1.5, above_vwap=True, market_up=True, latest_entry="11:00",
@@ -63,8 +70,8 @@ def _day_results(key: str, day: str, rules: Rules, prev: dict[str, float | None]
             continue
         r = simulate_day(key, candles, RULES.pot, rules, bench=bench, prev_close=prev.get(s))
         prev[s] = candles[-1]["close"]
-        if r["trade"]:
-            out.append({"symbol": s, "pnl": r["pnl"], "buy": r["trade"]["buyTime"], "sell": r["trade"]["sellTime"]})
+        for t in r["trades"]:   # one row per trade (a stock can trade more than once a day)
+            out.append({"symbol": s, "pnl": t["pnl"], "buy": t["buyTime"], "sell": t["sellTime"]})
     if rules.max_losses_per_day:
         kept, losses = [], []
         for t in sorted(out, key=lambda t: t["buy"]):

@@ -10,6 +10,8 @@ The strategy (opening-range breakout with a trailing profit lock), each trading 
 4. Once the price has been 1% over the buy price, a trailing stop follows the best price
    0.5% behind it, so a winner can run but a pullback locks the profit in.
 5. Anything still held is sold 15 minutes before the close: nothing is held overnight.
+Named rule sets (STRATEGIES) add to this; "quick3" also takes a quick profit once up 0.5% (it sells on the first
+minute that closes lower) and buys again when the price turns back up, up to 3 trades a stock a day.
 
 Money: each stock has its own pot of 1,000 in its own currency (₹ for NSE, $ for US).
 Profit from a winning day is withdrawn, so a pot never grows past 1,000; a loss shrinks it.
@@ -39,6 +41,11 @@ class Rules:
     max_losses_per_day: int = 0      # stop buying in a market after this many losing trades that day
     target_pct: float = 0.0          # sell as soon as the price is this much over the buy price (a fixed profit target)
     breakout_pct: float = 0.0        # buy only on a clear breakout: a close this much above the range high
+    max_trades: int = 1              # trades per stock per day; above 1, it buys again when the price turns back up
+    rebuy_after_loss: bool = False   # ...even after a losing trade (off: a loss ends that stock's day)
+    rebuy_filters: bool = True       # the buy filters (volume, VWAP, market) also apply when buying again
+    quick_exit_pct: float = 0.0      # once up this much, sell when a minute turns down (taking the profit)
+    quick_exit_on: str = "low"       # "low": a close below the previous minute's low · "close": below its close
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -51,8 +58,13 @@ STRATEGIES: dict[str, tuple[str, Rules]] = {
     "current": ("Current rules", RULES),
     "filters": ("Filters combined (volume + above VWAP + market up)",
                 Rules(min_volume_mult=1.5, above_vwap=True, market_up=True)),
+    # the first buy passes the filters; once up 0.5% it sells on the first minute that closes lower, and buys again
+    # when a minute closes above the one before (no filters for that, they block good re-entries), up to 3 a day
+    "quick3": ("Quick profits, up to 3 trades a day",
+               Rules(min_volume_mult=1.5, above_vwap=True, market_up=True, max_trades=3, quick_exit_pct=0.5,
+                     quick_exit_on="close", rebuy_filters=False, rebuy_after_loss=True)),
 }
-DEFAULT_STRATEGY = {"IN": "current", "US": "filters"}   # from the 6-month test: filters helped the US in both periods
+DEFAULT_STRATEGY = {"IN": "quick3", "US": "quick3"}   # one rule set for both markets (see the strategy tester)
 
 
 def strategy(key: str | None) -> tuple[str, Rules]:

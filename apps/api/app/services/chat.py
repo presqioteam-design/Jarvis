@@ -39,7 +39,8 @@ or, when the admin clearly asks you to do something, one of these actions:
 {{"reply": "...", "action": {{"name": "send_follow_ups"}}}}
 {{"reply": "...", "action": {{"name": "check_replies"}}}}
 {{"reply": "...", "action": {{"name": "auto", "on": true|false}}}}   (turn automatic sending on or off)
-{{"reply": "...", "action": {{"name": "report"}}}}   (today's report now)
+{{"reply": "...", "action": {{"name": "report"}}}}   (today's report / overview / summary, shown here)
+{{"reply": "...", "action": {{"name": "report_telegram"}}}}   (send today's full report to Telegram: ONLY when they ask for Telegram)
 {{"reply": "...", "action": {{"name": "explore_status"}}}}   (how the night explorer is doing)
 {{"reply": "...", "action": {{"name": "list_leads", "area": "<locality or null>", "status": "new|ready|emailed|replied|interested|no_contact"}}}}
 {{"reply": "...", "action": {{"name": "approve", "numbers": [<numbers from the last list>]}}}}
@@ -53,7 +54,9 @@ or, when the admin clearly asks you to do something, one of these actions:
 {{"reply": "...", "action": {{"name": "scan", "place": "<city, or area and city>", "radius_km": <number or null for a whole city>, "category": "<{category_keys}>"}}}}
 
 Rules:
-- Only act when asked. If they ask to send emails without saying how many, ask how many (action null).
+- Only act when asked. Nothing goes to Telegram unless they ask for Telegram ("send the report to Telegram").
+- Questions about the lab in other words ("how did NVDA do yesterday", "why did we sell Reliance", "did we make money
+  today") -> lab_day with the date and stock; "how is the lab / trading going" -> lab_status. If they ask to send emails without saying how many, ask how many (action null).
 - When they say how many to send, always start send_emails, even if the data suggests fewer leads are left:
   the sending job checks and reports exactly what it sent. Don't ask for confirmation.
 - The same for send_follow_ups and check_replies: just start them.
@@ -224,7 +227,8 @@ Kinds: hotels, hospitals, schools, restaurants, factories, retail, IT, offices, 
 • lab test — which smarter rules did best on months of past data
 • lab swing — the US swing strategy (held for days) and buy-and-hold for comparison
 
-📊 report — today's numbers now (also sent at 7 PM, with a voice note)
+📊 report — today's numbers now, outreach and the Trading Lab (also sent at 7 PM, with a voice note)
+📨 send report to telegram — the full report with its voice note, right now
 📈 usage — today's AI and voice usage against the daily limits
 🎙 You can send me voice notes too.
 
@@ -236,7 +240,12 @@ COMMANDS = [
     (re.compile(r"^(pause|stop)\s+auto(?:[\s-]?send(?:ing)?)?[.!]*$", re.I), lambda m: {"name": "auto", "on": False}),
     (re.compile(r"^(resume|start)\s+auto(?:[\s-]?send(?:ing)?)?[.!]*$", re.I), lambda m: {"name": "auto", "on": True}),
     (re.compile(r"^auto(?:[\s-]?send)?\s+status\??$|^status\??$", re.I), lambda m: {"name": "auto_status"}),
-    (re.compile(r"^/?(daily\s+)?report[.!?]*$", re.I), lambda m: {"name": "report"}),
+    (re.compile(r"^/?(?:(?:send|share|forward|post|push)\s+)?(?:me\s+)?(?:the\s+|today'?s\s+|my\s+|a\s+)?(?:daily\s+|full\s+|overview\s+)?"
+                r"(?:report|overview|summary)\s+(?:to|on|in|via|over)\s+(?:my\s+)?telegram[.!]*$|^/?telegram\s+(?:the\s+|me\s+)?(?:report|overview|summary)[.!]*$", re.I),
+     lambda m: {"name": "report_telegram"}),
+    (re.compile(r"^/?(?:(?:show|give|tell)\s+(?:me\s+)?)?(?:the\s+|today'?s\s+|a\s+|an\s+)?(?:daily\s+|quick\s+|full\s+)?"
+                r"(?:report|overview|summary|numbers|update)(?:\s+(?:for\s+)?today)?[.!?]*$|^/?how\s+(?:are\s+we|is\s+it)\s+(?:doing|going)(?:\s+today)?\??$", re.I),
+     lambda m: {"name": "report"}),
     (re.compile(r"^/?(usage|limits?|quota)[.!?]*$", re.I), lambda m: {"name": "usage"}),
     (re.compile(r"^explor(?:e|er|ing)\s+status\??$", re.I), lambda m: {"name": "explore_status"}),
     (re.compile(r"^(pause|stop)\s+explor(?:e|er|ing)[.!]*$", re.I), lambda m: {"name": "explore_on", "on": False}),
@@ -246,23 +255,36 @@ COMMANDS = [
      lambda m: {"name": "send_emails", "count": int(m[1]), "area": m[2]}),
     (re.compile(r"^send\s+follow[\s-]?ups?[.!]*$", re.I), lambda m: {"name": "send_follow_ups"}),
     (re.compile(r"^check\s+(?:the\s+)?(?:replies|inbox|mails?|emails?)[.!?]*$", re.I), lambda m: {"name": "check_replies"}),
-    (re.compile(r"^(?:trading\s+)?lab(?:\s+status)?[.!?]*$|^trading(?:\s+lab)?(?:\s+status)?[.!?]*$", re.I), lambda m: {"name": "lab_status"}),
+    (re.compile(r"^(?:trading\s+)?lab(?:\s+status)?[.!?]*$|^trading(?:\s+lab)?(?:\s+status)?[.!?]*$"
+                r"|^(?:show\s+(?:me\s+)?)?(?:the\s+)?trading\s+lab(?:\s+(?:status|overview|summary|results?))?[.!?]*$"
+                r"|^how(?:'s|\s+is)\s+(?:the\s+)?(?:trading(?:\s+lab)?|lab)(?:\s+(?:doing|going))?\??$", re.I), lambda m: {"name": "lab_status"}),
     (re.compile(r"^(?:check\s+(?:the\s+)?(?:trading\s+)?lab|(?:trading\s+)?lab\s+check)[.!?]*$", re.I), lambda m: {"name": "lab_check"}),
     (re.compile(r"^(?:trading\s+)?lab\s+(?:test|backtest|strategy|strategies)[.!?]*$", re.I), lambda m: {"name": "lab_test"}),
     (re.compile(r"^(?:trading\s+)?lab\s+swing[.!?]*$", re.I), lambda m: {"name": "lab_swing"}),
     (re.compile(r"^(?:trading\s+)?lab\s+(?:day\s+)?(\d{4}-\d{2}-\d{2}|today|yesterday|latest|last)(?:\s+([A-Za-z&]+))?[.!?]*$", re.I),
      lambda m: {"name": "lab_day", "date": m[1], "symbol": m[2]}),
+    # "lab NVDA yesterday", "show me NVDA yesterday", "NVDA trade today", "trades yesterday"
+    (re.compile(r"^(?:(?:trading\s+)?lab\s+|show\s+(?:me\s+)?)?(?:the\s+)?([A-Za-z&]{2,12})\s+(?:trades?\s+)?(?:on\s+)?(\d{4}-\d{2}-\d{2}|today|yesterday)[.!?]*$", re.I),
+     lambda m: {"name": "lab_day", "date": m[2], "symbol": m[1]} if _is_stock(m[1]) else {"name": "lab_day", "date": m[2], "symbol": None} if m[1].lower() in ("trades", "trade", "lab") else None),
     (re.compile(r"^approve\s+([\d,\s]+|\d+(?:\s*(?:,|and)\s*\d+)*)$", re.I), lambda m: {"name": "approve", "numbers": re.findall(r"\d+", m[1])}),
     (re.compile(r"^block\s+([\d,\s]+|\d+(?:\s*(?:,|and)\s*\d+)*)$", re.I), lambda m: {"name": "block", "numbers": re.findall(r"\d+", m[1])}),
 ]
+
+
+def _is_stock(word: str) -> bool:
+    try:
+        from tradinglab.rules import STOCKS
+        return word.upper() in STOCKS
+    except Exception:
+        return False
 
 
 def command(text: str) -> dict | None:
     t = text.strip()
     for pattern, build in COMMANDS:
         m = pattern.match(t)
-        if m:
-            return build(m)
+        if m and (action := build(m)):
+            return action
     return None
 
 
@@ -343,11 +365,13 @@ def run_action(action: dict) -> tuple[bool, str]:
         return False, (f"🤖 Auto-send is {'ON' if outreach.auto_enabled() else 'PAUSED'}: {outreach.auto_window()}.\n"
                        f"Today: {outreach.sent_today()} of {prefs.sending()['dailyCap']} emails sent; follow-ups due now: {len(outreach.due_follow_ups(100))}."
                        + ("\nA batch is sending right now." if outreach.busy() else ""))
-    if name == "report":
+    if name == "report":   # shown where they asked; Telegram only on request (report_telegram)
+        return False, report.written(report.gather())
+    if name == "report_telegram":
         task = asyncio.create_task(report.send_daily())
         _tasks.add(task)
         task.add_done_callback(_tasks.discard)
-        return True, "📊 Putting today's report together…"
+        return True, "📊 Sending today's full report (with the Trading Lab) to Telegram…"
     if name == "list_leads":
         status = action.get("status") if action.get("status") in STATUS_WORDS else "new"
         area = leads.find_area(action["area"]) if action.get("area") else None

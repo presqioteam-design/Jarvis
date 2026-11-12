@@ -1,12 +1,25 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import Orb from "../components/Orb";
+import Presentation from "../components/Presentation";
+import type { AvatarFocus } from "../components/Avatar";
 import Icon from "../components/Icon";
-import type { CallState } from "../lib/voice";
+import type { CallState, Task } from "../lib/voice";
 import { clockOf, useCall } from "../lib/call";
 import { prepareVoice, warmUp } from "../lib/api";
 
+// three.js is only downloaded when someone switches to the avatar
+const Avatar = lazy(() => import("../components/Avatar"));
+
+type Look = "orb" | "avatar";
+const LOOK_KEY = "jarvis.voice.look";
+const savedLook = (): Look => {
+  try { return localStorage.getItem(LOOK_KEY) === "avatar" ? "avatar" : "orb"; } catch { return "orb"; }
+};
+const PRESENT_MS = 15000;   // how long a command's result card stays up
+const BOARD_MS = 45000;     // a visual (overview, Trading Lab) stays longer, and while Jarvis talks it through
+
 const STATUS: Record<CallState | "idle", string> = {
-  idle: "Tap to talk to Jarvis",
+  idle: "",   // the button below already says it
   connecting: "Connecting…",
   listening: "Listening",
   thinking: "Working on it",
@@ -17,7 +30,44 @@ const STATUS: Record<CallState | "idle", string> = {
 
 export default function Voice() {
   // the call itself lives in CallProvider, so leaving this page doesn't hang up
-  const { state, live, you, jarvis, error, muted, seconds, allowance, begin, end, toggleMute, levels } = useCall();
+  const { state, live, you, jarvis, error, muted, seconds, allowance, begin, end, toggleMute, levels, tasks } = useCall();
+  const [look, setLook] = useState<Look>(savedLook);
+  const pick = (l: Look) => {
+    setLook(l);
+    try { localStorage.setItem(LOOK_KEY, l); } catch { /* private mode: just not remembered */ }
+  };
+
+  // the newest command: "work" while it runs, "present" for a while after its result arrives
+  const task = tasks[0];
+  const [shownUntil, setShownUntil] = useState(0);
+  const [, tick] = useState(0);
+  const [dismissed, setDismissed] = useState("");
+  useEffect(() => {
+    if (!task?.result) return;
+    const ms = task.display ? BOARD_MS : PRESENT_MS;
+    setShownUntil(Date.now() + ms);
+    const id = setTimeout(() => tick((n) => n + 1), ms + 50);
+    return () => clearTimeout(id);
+  }, [task?.id, task?.result]);
+  const showing = !!task?.result && task.id !== dismissed && (Date.now() < shownUntil || (!!task.display && state === "speaking"));
+  const stageRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const focus: AvatarFocus = !task ? null : !task.result ? "work" : showing ? "present" : null;
+
+  // what the card shows; kept for a moment after it's done so it can fade out
+  const cardOn = !!(focus && task && (look === "avatar" || focus === "present"));
+  const [card, setCard] = useState<{ task: Task; focus: "work" | "present" } | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  useEffect(() => {
+    if (cardOn && task && focus) {
+      setCard({ task, focus });
+      setLeaving(false);
+      return;
+    }
+    setLeaving(true);
+    const id = setTimeout(() => { setCard(null); setLeaving(false); }, 450);
+    return () => clearTimeout(id);
+  }, [cardOn, task, focus]);
 
   useEffect(() => {
     warmUp(); // wake the server while you read the page
@@ -27,10 +77,14 @@ export default function Voice() {
   const clock = clockOf(seconds);
 
   return (
-    <div className={`voice-page state-${state}`}>
+    <div className={`voice-page state-${state} look-${look}`}>
       <div className="hud hud-top">
         <span className="hud-title">J.A.R.V.I.S</span>
         <span className="hud-sub">PRESQIO · SALES ASSISTANT</span>
+        <span className="hud-toggle" role="group" aria-label="How Jarvis looks">
+          <button type="button" aria-pressed={look === "orb"} onClick={() => pick("orb")}>ORB</button>
+          <button type="button" aria-pressed={look === "avatar"} onClick={() => pick("avatar")}>AVATAR</button>
+        </span>
         <span className="hud-right">
           {live && <span className="rec" aria-hidden="true" />}
           {live ? (allowance ? `${clock} / ${String(Math.floor(allowance.maxSeconds / 60)).padStart(2, "0")}:00` : clock) : "STANDBY"}
@@ -43,27 +97,40 @@ export default function Voice() {
       <span className="hud-rail left" aria-hidden="true" />
       <span className="hud-rail right" aria-hidden="true" />
 
-      <aside className="hud-panel left" aria-hidden="true">
-        <h4>SYSTEM</h4>
-        <dl>
-          <dt>CORE</dt><dd>{live ? "ONLINE" : state === "error" ? "FAULT" : "STANDBY"}</dd>
-          <dt>LINK</dt><dd>{state === "connecting" ? "HANDSHAKE" : live ? "GEMINI LIVE" : "—"}</dd>
-          <dt>VOICE</dt><dd>{muted ? "MUTED" : live ? "OPEN" : "—"}</dd>
-          <dt>MODE</dt><dd>SALES OPS</dd>
-        </dl>
-      </aside>
-      <aside className="hud-panel right" aria-hidden="true">
-        <h4>SESSION</h4>
-        <dl>
-          <dt>TIME</dt><dd>{live ? clock : "00:00"}</dd>
-          <dt>LIMIT</dt><dd>{allowance ? `${Math.round(allowance.maxSeconds / 60)} MIN` : "—"}</dd>
-          <dt>CALLS</dt><dd>{allowance?.callsLeft != null ? `${allowance.callsLeft} LEFT` : "—"}</dd>
-          <dt>USER</dt><dd>BOSS</dd>
-        </dl>
-      </aside>
 
-      <div className="orb-wrap">
-        <Orb state={state} levels={levels} />
+      {look === "avatar" && (
+        <Suspense fallback={null}>
+          <Avatar state={state} levels={levels} focus={focus} onFail={() => pick("orb")} frame={stageRef} card={cardRef} />
+        </Suspense>
+      )}
+      {/* the character holds this card up; with the orb it floats at the top instead. It fades out rather than vanishing. */}
+      {card && (
+        <div ref={cardRef} className={`char-card ${card.focus} ${card.focus === "present" && card.task.display ? "board" : ""} ${look === "orb" ? "floating" : ""} ${leaving ? "leaving" : ""}`} aria-live="polite">
+          <div className="char-card-head">
+            {card.focus === "work" ? "EXTRACTING" : card.task.display ? "ON SCREEN" : "RESULT"}
+            {card.focus === "present" && (
+              <button type="button" className="char-card-close" onClick={() => setDismissed(card.task.id)} aria-label="Close">×</button>
+            )}
+          </div>
+          {card.focus === "work" ? (
+            <>
+              <div className="char-card-cmd">{card.task.command}</div>
+              <div className="char-card-scan" aria-hidden="true" />
+            </>
+          ) : card.task.display ? (
+            <Presentation display={card.task.display} />
+          ) : (
+            <>
+              <div className="char-card-cmd">{card.task.command}</div>
+              <div className="char-card-body">{card.task.result}</div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* the orb, or the empty box the 3D character stands in */}
+      <div ref={stageRef} className="orb-wrap">
+        {look === "orb" && <Orb state={state} levels={levels} />}
       </div>
 
       <div className="voice-status" aria-live="polite">{STATUS[state]}</div>

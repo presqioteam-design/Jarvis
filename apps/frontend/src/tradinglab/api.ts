@@ -26,10 +26,10 @@ export type Candle = { time: string; open: number; high: number; low: number; cl
 export type Trade = {
   buyTime: string; buyPrice: number; qty: number; sellTime: string | null; sellPrice: number | null; best: number;
   charges: number; pnl: number; pnlPct: number; reason: string; exit: string;
-  open?: boolean; last?: number; lastTime?: string; stop?: number; trailing?: boolean;
+  open?: boolean; last?: number; lastTime?: string; stop?: number; trailing?: boolean; pot?: number;
 };
 export type LiveState = "range" | "watching" | "holding" | "sold" | "no_trade";
-export type LiveStock = { state: LiveState; note: string; pnl: number; price: number | null; time: string | null; done: boolean; trade: Trade | null };
+export type LiveStock = { state: LiveState; note: string; pnl: number; price: number | null; time: string | null; done: boolean; trade: Trade | null; trades?: Trade[] };
 export type LiveMarket = {
   open: boolean; nextOpen: string; day: string;
   state: { day: string; checkedAt?: string; holiday: boolean; stopped: string; stocks: Record<string, LiveStock> } | null;
@@ -37,7 +37,7 @@ export type LiveMarket = {
 export type LiveView = { markets: Record<MarketKey, LiveMarket> };
 export type StockReplay =
   | { symbol: string; market: MarketKey; currency: Currency; candles: Candle[]; range: { high: number; low: number; until: string } | null;
-      trade: Trade | null; note: string; pnl: number; potStart: number; error?: undefined }
+      trade: Trade | null; trades?: Trade[]; note: string; pnl: number; potStart: number; error?: undefined }
   | { symbol: string; market: MarketKey; error: string };
 export type DayReplay = { date: string; stocks: StockReplay[] };
 

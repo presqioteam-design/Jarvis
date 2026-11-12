@@ -48,12 +48,38 @@ def _config() -> dict | None:
 
 
 def strategy_key(cfg: dict, key: str, day: str | None = None) -> str:
-    """The rule set a market runs (on `day`, if given): sessions before the market's switch date keep the
-    rules they ran with."""
-    since = (cfg.get("strategySince") or {}).get(key)
-    if day and since and day < since:
-        return "current"
+    """The rule set a market runs (on `day`, if given): each session keeps the rules it ran with.
+    strategyHistory lists each market's switches as [since, key]; older configs have one switch (strategySince)."""
+    if day:
+        hist = (cfg.get("strategyHistory") or {}).get(key)
+        if hist:
+            name = "current"
+            for since, k in sorted(hist):
+                if day >= since:
+                    name = k
+            return name
+        since = (cfg.get("strategySince") or {}).get(key)
+        if since and day < since:
+            return "current"
     return (cfg.get("strategy") or {}).get(key, "current")
+
+
+def switch_strategy(key: str, name: str, since: str) -> dict:
+    """Run `name` in market `key` from session `since` on; earlier sessions keep the rules they ran with."""
+    if name not in STRATEGIES or key not in MARKETS:
+        raise ValueError(f"unknown market or rules: {key} {name}")
+    cfg = _config()
+    if not cfg:
+        raise ValueError("the lab isn't started")
+    hist = dict(cfg.get("strategyHistory") or {})
+    if key not in hist:   # carry the one earlier switch over from the older format
+        old = (cfg.get("strategySince") or {}).get(key)
+        hist[key] = [[old, (cfg.get("strategy") or {}).get(key, "current")]] if old else []
+    hist[key] = [h for h in hist[key] if h[0] < since] + [[since, name]]
+    upd = {"strategy": {**(cfg.get("strategy") or {}), key: name},
+           "strategySince": {**(cfg.get("strategySince") or {}), key: since}, "strategyHistory": hist}
+    _cfg_ref().update(upd)
+    return upd
 
 
 def rules_for(cfg: dict, key: str, day: str | None = None):
@@ -118,12 +144,12 @@ def _save_day(cfg: dict, key: str, day: str, res: dict) -> str:
     stocks, pnl, withdrawn, trades, wins = {}, 0.0, 0.0, 0, 0
     for s, r in res.items():
         stocks[s] = {"market": key, "potStart": r["potStart"], "potEnd": r["potEnd"], "pnl": r["pnl"],
-                     "withdrawn": r["withdrawn"], "traded": r["trade"] is not None}
+                     "withdrawn": r["withdrawn"], "traded": r["trade"] is not None, "trades": len(r["trades"])}
         cfg["pots"][key][s] = r["potEnd"]
         pnl += r["pnl"]
         withdrawn += r["withdrawn"]
-        trades += r["trade"] is not None
-        wins += r["pnl"] > 0
+        trades += len(r["trades"])                       # every trade (a stock can trade more than once a day)
+        wins += sum(1 for x in r["trades"] if x["pnl"] > 0)
     t.update(pnl=round(t["pnl"] + pnl, 2), withdrawn=round(t["withdrawn"] + withdrawn, 2),
              trades=t["trades"] + trades, wins=t["wins"] + wins, days=t["days"] + 1)
     summary = {"currency": m.currency, "strategy": strategy_key(cfg, key, day), "pnl": round(pnl, 2), "withdrawn": round(withdrawn, 2), "trades": trades, "wins": wins,
@@ -231,7 +257,7 @@ async def _replay(day: str) -> dict | None:
             return {"symbol": symbol, "market": key, "error": str(e)}
         r = simulate_day(key, candles, saved["potStart"], used.get(key, RULES), bench=bench.get(key))
         return {"symbol": symbol, "market": key, "currency": MARKETS[key].currency, "candles": candles_every(candles, 1),
-                "range": r["range"], "trade": r["trade"], "note": r["note"], "pnl": r["pnl"], "potStart": r["potStart"]}
+                "range": r["range"], "trade": r["trade"], "trades": r["trades"], "note": r["note"], "pnl": r["pnl"], "potStart": r["potStart"]}
 
     order = [s for m in MARKETS.values() for s in m.stocks if s in stocks]
     return {"date": day, "stocks": await asyncio.gather(*(one(s, stocks[s]) for s in order))}
@@ -257,7 +283,7 @@ async def _replay_live(day: str, only: str | None = None) -> dict | None:
         rules = rules_for(cfg, key)
         r = simulate_day(key, candles, pot, rules, live=True, bench=live.candles_today(MARKETS[key].benchmark) if rules.market_up else None)
         return {"symbol": symbol, "market": key, "currency": MARKETS[key].currency, "candles": candles_every(candles, 1),
-                "range": r["range"], "trade": r["trade"], "note": r["note"], "pnl": r["pnl"], "potStart": pot,
+                "range": r["range"], "trade": r["trade"], "trades": r["trades"], "note": r["note"], "pnl": r["pnl"], "potStart": pot,
                 "state": r["state"], "live": True}
 
     return {"date": day, "live": True,
@@ -554,20 +580,131 @@ async def day_text(day: str | None, symbol: str | None = None) -> str:
     for s in rows:
         if s.get("error"):
             lines.append(f"- {s['symbol']}: prices unavailable ({s['error']})")
-        elif s["trade"] and s["trade"].get("open"):   # today, still held
-            t, c = s["trade"], s["currency"]
-            lines.append(f"- {s['symbol']}: HOLDING. Bought {t['buyTime']} at {t['buyPrice']:,.2f} ({t['reason']}); "
-                         f"now {t['last']:,.2f} at {t['lastTime']}, {_cur(c, t['pnl'], True)} so far ({t['pnlPct']:+.2f}%); "
-                         f"sells if it falls to {t['stop']:,.2f}{' (trailing stop)' if t.get('trailing') else ''} or at the close")
         elif s["trade"]:
-            t, c = s["trade"], s["currency"]
-            lines.append(f"- {s['symbol']}: bought {t['buyTime']} at {t['buyPrice']:,.2f} ({t['reason']}); "
-                         f"sold {t['sellTime']} at {t['sellPrice']:,.2f} ({t['exit']}); {_cur(c, t['pnl'], True)} ({t['pnlPct']:+.2f}%)")
+            c, ts = s["currency"], s.get("trades") or [s["trade"]]
+            parts = []
+            for n, t in enumerate(ts, 1):
+                head = f"trade {n}: " if len(ts) > 1 else ""
+                if t.get("open"):   # today, still held
+                    parts.append(f"{head}HOLDING. Bought {t['buyTime']} at {t['buyPrice']:,.2f} ({t['reason']}); "
+                                 f"now {t['last']:,.2f} at {t['lastTime']}, {_cur(c, t['pnl'], True)} so far ({t['pnlPct']:+.2f}%); "
+                                 f"sells if it falls to {t['stop']:,.2f}{' (trailing stop)' if t.get('trailing') else ''} or at the close")
+                else:
+                    parts.append(f"{head}bought {t['buyTime']} at {t['buyPrice']:,.2f} ({t['reason']}); "
+                                 f"sold {t['sellTime']} at {t['sellPrice']:,.2f} ({t['exit']}); {_cur(c, t['pnl'], True)} ({t['pnlPct']:+.2f}%)")
+            total = f" Day total {_cur(c, s['pnl'], True)} after charges." if len(ts) > 1 else ""
+            lines.append(f"- {s['symbol']}: " + "; ".join(parts) + "." + total)
         else:
             last = s["candles"][-1] if s.get("candles") else None
             now = f" Price now {last['close']:,.2f} at {last['time']}." if s.get("live") and last else ""
             lines.append(f"- {s['symbol']}: no trade yet. {s['note']}.{now}" if s.get("live") else f"- {s['symbol']}: no trade. {s['note']}.")
     return "\n".join(lines)
+
+
+def report_summary() -> dict | None:
+    """The lab for the daily report: {"lines": [...] for the message, "spoken": a sentence for the voice note}."""
+    cfg = _config()
+    if not cfg:
+        return None
+    days = sorted((d.to_dict() for d in col("tradinglab_days").stream()), key=lambda d: d["date"])
+    lines, said = ["📈 Trading Lab (paper money):"], []
+    for k, m in MARKETS.items():
+        t = cfg["totals"][k]
+        line = f"• {m.name}: {_cur(m.currency, t['pnl'], True)} since {cfg['startDate']} ({t['wins']} of {t['trades']} trades won)"
+        last = next((d for d in reversed(days) if k in d.get("markets", {})), None)
+        if last:
+            md = last["markets"][k]
+            line += f"; {last['date']}: {_cur(m.currency, md['pnl'], True)} on {md['trades']} trades"
+        lines.append(line)
+        spoken_name = {"IN": "India", "US": "the US"}.get(k, m.name)
+        said.append(f"{spoken_name} is {'up' if t['pnl'] >= 0 else 'down'} {_cur(m.currency, abs(t['pnl']))} overall")
+    return {"lines": lines, "spoken": "In the Trading Lab, " + ", and ".join(said) + "."}
+
+
+# ── what Jarvis's on-screen character presents (voice calls) ────────────────
+# A "display" is plain data the page draws: stat tiles, bar or line charts and a list (see Presentation.tsx).
+
+def _tone(v: float) -> str | None:
+    return "up" if v > 0 else "down" if v < 0 else None
+
+
+def lab_display() -> dict | None:
+    """The lab at a glance: each market's money, and its daily P&L over the last two weeks."""
+    cfg = _config()
+    if not cfg:
+        return None
+    days = sorted((d.to_dict() for d in col("tradinglab_days").stream()), key=lambda d: d["date"])
+    stats, charts = [], []
+    for k, m in MARKETS.items():
+        t, pots = cfg["totals"][k], cfg["pots"][k]
+        stats.append({"label": f"{m.name} P&L", "value": _cur(m.currency, t["pnl"], True), "tone": _tone(t["pnl"]),
+                      "note": f"{t['wins']} of {t['trades']} trades won"})
+        stats.append({"label": f"{m.name} total", "value": _cur(m.currency, sum(pots.values()) + t["withdrawn"]),
+                      "note": f"on {_cur(m.currency, RULES.pot * len(m.stocks))}"})
+        recent = [d for d in days if k in d.get("markets", {})][-12:]
+        if recent:
+            charts.append({"type": "bars", "title": f"{m.name}: P&L per day",
+                           "items": [{"label": d["date"][5:], "value": d["markets"][k]["pnl"],
+                                      "text": _cur(m.currency, d["markets"][k]["pnl"], True)} for d in recent]})
+    rows = [{"label": m.name, "detail": STRATEGIES[strategy_key(cfg, k)][0]} for k, m in MARKETS.items()]
+    return {"title": "Trading Lab", "subtitle": f"Paper money · since {cfg['startDate']}",
+            "stats": stats, "charts": charts, "rows": {"title": "Rules now", "items": rows}}
+
+
+async def day_display(day: str | None, symbol: str | None = None) -> dict | None:
+    """One session: each market's result, every trade, and (for one stock) its price line with the buy and sell."""
+    if not _config():
+        return None
+    if not day:
+        ids = sorted(d.id for d in col("tradinglab_days").select([]).stream())
+        if not ids:
+            return None
+        day = ids[-1]
+    out = await _replay(day)
+    if out is None:
+        return None
+    stocks = [s for s in out["stocks"] if not s.get("error")]
+    picked = [s for s in stocks if symbol and s["symbol"].upper() == symbol.upper()]
+    stats = []
+    for k, m in MARKETS.items():
+        mine = [s for s in stocks if s["market"] == k]
+        if not mine:
+            continue
+        pnl = sum(s["pnl"] for s in mine if s["trade"])
+        traded = sum(1 for s in mine if s["trade"])
+        stats.append({"label": m.name, "value": _cur(m.currency, pnl, True), "tone": _tone(pnl), "note": f"{traded} of {len(mine)} stocks traded"})
+    items = []
+    for s in picked or stocks:
+        c, ts = s.get("currency", "USD"), s.get("trades") or ([s["trade"]] if s["trade"] else [])
+        if not ts:
+            items.append({"label": s["symbol"], "detail": f"No trade · {s['note']}"})
+        for n, t in enumerate(ts, 1):
+            label = s["symbol"] + (f" #{n}" if len(ts) > 1 else "")
+            detail = (f"Bought {t['buyTime']} at {t['buyPrice']:,.2f} · holding, now {t['last']:,.2f}" if t.get("open")
+                      else f"Bought {t['buyTime']} at {t['buyPrice']:,.2f} → sold {t['sellTime']} at {t['sellPrice']:,.2f} · {t['exit']}")
+            items.append({"label": label, "detail": detail, "value": _cur(c, t["pnl"], True), "tone": _tone(t["pnl"])})
+    charts = []
+    if picked and picked[0].get("candles"):
+        s = picked[0]
+        bars = candles_every([{"date": f"{day} {c['time']}", **c} for c in s["candles"]], 5)
+        marks = []
+
+        def at(hhmm: str) -> int:
+            slot = f"{hhmm[:3]}{int(hhmm[3:5]) - int(hhmm[3:5]) % 5:02d}"
+            return next((i for i, b in enumerate(bars) if b["time"] >= slot), len(bars) - 1)
+        ts = s.get("trades") or ([s["trade"]] if s["trade"] else [])
+        for n, t in enumerate(ts, 1):
+            num = f"{n}. " if len(ts) > 1 else ""
+            marks.append({"at": at(t["buyTime"]), "kind": "buy", "label": f"{num}Buy {t['buyTime']} · {t['buyPrice']:,.2f}"})
+            if t.get("sellTime"):
+                marks.append({"at": at(t["sellTime"]), "kind": "sell", "label": f"Sell {t['sellTime']} · {t['sellPrice']:,.2f}"})
+        charts.append({"type": "line", "title": f"{s['symbol']} · 5-minute prices",
+                       "points": [[b["time"], b["close"]] for b in bars], "marks": marks,
+                       "band": [s["range"]["low"], s["range"]["high"]] if s.get("range") else None})
+    title = f"{picked[0]['symbol']} · {day}" if picked else f"Trading Lab · {day}"
+    return {"title": title, "subtitle": "Paper trading" + (" · live, from the last check" if out.get("live") else ""),
+            "stats": stats if not picked else [i for i in stats if i["label"] == MARKETS[picked[0]["market"]].name],
+            "charts": charts, "rows": {"title": "Trades", "items": items}}
 
 
 @router.post("/job", dependencies=[Depends(require_cron)])

@@ -169,7 +169,7 @@ export default function LiveCard({ lab }: { lab: Started }) {
 
       {sel && (
         <>
-          <CandleChart live candles={sel.candles} range={sel.range} trade={sel.trade} currency={sel.currency} symbol={sel.symbol} />
+          <CandleChart live candles={sel.candles} range={sel.range} trade={sel.trade} trades={sel.trades} currency={sel.currency} symbol={sel.symbol} />
           <p className="muted small tl-pad">
             {sel.symbol}: {sel.note}.{sel.trade?.open ? ` Bought ${sel.trade.buyTime} at ${price(sel.trade.buyPrice)}; now ${price(sel.trade.last ?? 0)}.` : ""}
           </p>

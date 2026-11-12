@@ -1,4 +1,5 @@
 import { auth } from "./firebase";
+import type { Display } from "./display";
 
 const API_URL = import.meta.env.VITE_API_URL as string;
 
@@ -47,7 +48,9 @@ export const prepareVoice = () => call<{ ok: boolean }>("/voice/prepare", {}).ca
 
 export const startVoiceSession = () =>
   call<{ url: string; maxSeconds: number; callsLeft: number | null; callsPerDay: number }>("/voice/session", {});
-export const voiceCommand = (command: string) => call<{ result: string }>("/voice/command", { command });
+export const voiceCommand = (command: string) => call<{ result: string; display?: Display | null }>("/voice/command", { command });
+export const voiceShow = (topic: string, date?: string, symbol?: string) =>
+  call<{ result: string; display: Display | null }>("/voice/show", { topic, date, symbol });
 export const sendChat = (message: string) => call<{ reply: string }>("/chat", { message });
 export const blockLead = (leadId: string) => call<{ ok: true }>(`/leads/${leadId}/block`, {});
 export const scanPlace = (place: string, radiusKm: number | null, category: string) =>

@@ -3,7 +3,8 @@
  * Mic → 16 kHz PCM chunks → Gemini; Gemini's 24 kHz PCM → speakers.
  * The token comes from our API, so the Gemini key never reaches the browser.
  */
-import { startVoiceSession, voiceCommand } from "./api";
+import { startVoiceSession, voiceCommand, voiceShow } from "./api";
+import type { Display } from "./display";
 
 export type CallState = "connecting" | "listening" | "thinking" | "speaking" | "ended" | "error";
 
@@ -13,7 +14,11 @@ type Events = {
   error: (message: string) => void;
   /** Today's allowance, known once the call is set up. */
   info: (i: { callsLeft: number | null; callsPerDay: number; maxSeconds: number }) => void;
+  /** Jarvis ran a command: once when it starts (no result yet), again with the result. */
+  task?: (t: Task) => void;
 };
+
+export type Task = { id: string; command: string; result?: string; display?: Display | null };
 
 // Runs on the audio thread: averages the mic down to 16 kHz and sends 40 ms Int16 chunks.
 const MIC_WORKLET = `
@@ -37,6 +42,8 @@ class Mic16k extends AudioWorkletProcessor {
 }
 registerProcessor("mic-16k", Mic16k);
 `;
+
+const TOPICS: Record<string, string> = { overview: "Overview", trading_lab: "Trading Lab", lab_day: "Trading Lab day" };
 
 const toBase64 = (buf: ArrayBuffer) => {
   let s = "";
@@ -148,6 +155,8 @@ export class VoiceCall {
   }
 
   private restarting = false;
+  private pending = 0;        // tool calls still running
+  private hanging = false;    // a hang-up is already waiting
 
   private async checkMic() {
     if (this.restarting || this.state === "ended" || this.state === "error" || !this.micCtx) return;
@@ -176,23 +185,34 @@ export class VoiceCall {
       return;
     }
     if (m.toolCall) {
-      const calls = m.toolCall.functionCalls ?? [];
-      if (calls.some((fc: { name?: string }) => fc.name === "end_call")) {
-        this.hangUpAfterGoodbye();
-        return;
-      }
-      this.set("thinking");
-      const responses = [];
+      const all = m.toolCall.functionCalls ?? [];
+      const hangUp = all.some((fc: { name?: string }) => fc.name === "end_call");
+      const calls = all.filter((fc: { name?: string }) => fc.name !== "end_call");
+      if (hangUp) this.hangUpAfterGoodbye();   // waits for anything still running and for the goodbye to finish
+      if (!calls.length) return;
+      if (!hangUp) this.set("thinking");
+      this.pending++;
+      const responses: { id?: string; name?: string; response: { result: string } }[] = [];
       for (const fc of calls) {
+        const id = String(fc.id ?? `${Date.now()}-${Math.random()}`);
+        const a = (fc.args ?? {}) as Record<string, unknown>;
+        const shown = fc.name === "show_on_screen";
+        const command = shown ? [TOPICS[String(a.topic)] ?? String(a.topic), a.date, a.symbol].filter(Boolean).join(" · ") : String(a.command ?? "");
+        this.on.task?.({ id, command });
         let result: string;
+        let display: Display | null | undefined;
         try {
-          result = (await voiceCommand(String(fc.args?.command ?? ""))).result;
+          ({ result, display } = shown
+            ? await voiceShow(String(a.topic ?? ""), a.date ? String(a.date) : undefined, a.symbol ? String(a.symbol) : undefined)
+            : await voiceCommand(command));
         } catch {
           result = "That didn't work: the server didn't answer.";
         }
+        this.on.task?.({ id, command, result, display });
         responses.push({ id: fc.id, name: fc.name, response: { result } });
       }
-      this.ws?.send(JSON.stringify({ toolResponse: { functionResponses: responses } }));
+      this.pending--;
+      if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ toolResponse: { functionResponses: responses } }));
       return;
     }
     if (m.goAway) {
@@ -220,12 +240,15 @@ export class VoiceCall {
     }
   }
 
-  /** Jarvis asked to hang up: let the goodbye finish playing (quiet for a moment), then end the call. */
+  /** Jarvis asked to hang up: let any command still running finish and the goodbye finish playing
+   *  (quiet for a moment), then end the call. */
   private hangUpAfterGoodbye() {
+    if (this.hanging) return;
+    this.hanging = true;
     const started = Date.now();
     const check = window.setInterval(() => {
-      const quiet = !this.playing.size && Date.now() - this.lastAudioAt > 1200;
-      if (quiet || Date.now() - started > 8000) {
+      const quiet = !this.pending && !this.playing.size && Date.now() - this.lastAudioAt > 1200;
+      if (quiet || Date.now() - started > 15000) {
         clearInterval(check);
         this.stop();
       }

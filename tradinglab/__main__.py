@@ -28,10 +28,10 @@ async def main(start: str, end: str | None) -> None:
                 print(f"{day}  market closed")
                 continue
             for s, r in res.items():
-                t = r["trade"]
-                if t:
-                    print(f"{day}  {s:<9} buy {t['buyTime']} @ {t['buyPrice']:>10,.2f} → sell {t['sellTime']} @ {t['sellPrice']:>10,.2f}"
-                          f"  {r['pnl']:+8.2f}  {t['exit']}")
+                if r["trades"]:
+                    for t in r["trades"]:
+                        print(f"{day}  {s:<9} buy {t['buyTime']} @ {t['buyPrice']:>10,.2f} → sell {t['sellTime']} @ {t['sellPrice']:>10,.2f}"
+                              f"  {t['pnl']:+8.2f}  {t['exit']}")
                 else:
                     print(f"{day}  {s:<9} no trade: {r['note']}")
                 pots[s] = r["potEnd"]

@@ -5,7 +5,7 @@ import CandleChart from "./CandleChart";
 import LiveCard from "./LiveCard";
 import BacktestCard from "./BacktestCard";
 import SwingCard from "./SwingCard";
-import { getDay, getExtras, getLab, loaded, refreshLab, startLab, type DayReplay, type Extras, type LabView, type MarketKey, type Rules } from "./api";
+import { getDay, getExtras, getLab, loaded, refreshLab, startLab, type DayReplay, type Extras, type LabView, type MarketKey, type Rules, type Trade } from "./api";
 import { money, price, shortDate, signed, tone } from "./format";
 import "./tradinglab.css";
 
@@ -13,6 +13,9 @@ type Started = Extract<LabView, { started: true }>;
 const MARKET_ORDER: MarketKey[] = ["IN", "US"];
 
 /** Trading Lab: Jarvis day-trades 10 stocks with 1,000 each of pretend money, for learning. No real orders. */
+/** Every trade a stock made that day (several when the rules allow buying again). */
+const tradesOf = (s: { trade: Trade | null; trades?: Trade[] }): Trade[] => (s.trades?.length ? s.trades : s.trade ? [s.trade] : []);
+
 export default function TradingLab() {
   const [lab, setLab] = useState<LabView | null>(null);
   const [error, setError] = useState("");
@@ -205,6 +208,14 @@ function Running({ lab, busy, onRestart }: { lab: Started; busy: boolean; onRest
           </div>
         )}
         <RulesList rules={lab.rules} />
+        {lab.strategy && Object.values(lab.strategy).some((n) => n.startsWith("Quick profits")) && (
+          <p className="muted small tl-pad">
+            "Quick profits, up to 3 trades a day": the first buy also needs the breakout minute's volume at 1.5× the day's average, the price above VWAP
+            and the market (NIFTYBEES / SPY) above its open. Once a trade has been 0.5% up, it sells on the first minute that closes lower (while still in
+            profit); the stop loss, trailing stop and 15-minutes-before-the-close sale still apply. It then buys again when a minute closes above the one
+            before it (and above the opening range), up to 3 trades a stock a day. Chosen with the strategy test below.
+          </p>
+        )}
         {lab.strategy && Object.values(lab.strategy).some((n) => n.startsWith("Filters")) && (
           <p className="muted small tl-pad">
             "Filters combined" adds three checks before a buy: the breakout minute's volume is at least 1.5× the day's average,
@@ -293,8 +304,20 @@ function DayCard({ days, date, onPick, note, lab, symbol, setSymbol }: {
 
           {sel && (!loaded(sel) ? <p className="error">{sel.symbol}: {sel.error}</p> : (
             <div className="tl-day">
-              <CandleChart candles={sel.candles} range={sel.range} trade={sel.trade} currency={sel.currency} symbol={sel.symbol} />
-              {sel.trade ? (
+              <CandleChart candles={sel.candles} range={sel.range} trade={sel.trade} trades={sel.trades} currency={sel.currency} symbol={sel.symbol} />
+              {tradesOf(sel).length > 1 ? (
+                <div className="tl-trades">
+                  {tradesOf(sel).map((t, i) => (
+                    <div key={i} className="tl-trade-row">
+                      <span className="tl-trade-n">{i + 1}</span>
+                      <span>Bought {t.buyTime} at {price(t.buyPrice)} → {t.sellTime ? `sold ${t.sellTime} at ${price(t.sellPrice ?? 0)}` : "holding"}
+                        <span className="muted small">{t.reason}{t.exit ? ` · ${t.exit}` : ""}</span></span>
+                      <span className={tone(t.pnl)}>{signed(t.pnl, sel.currency)}</span>
+                    </div>
+                  ))}
+                  <div className="tl-trade-row tl-trade-total"><span /><span>Day total, after charges</span><span className={tone(sel.pnl)}>{signed(sel.pnl, sel.currency)}</span></div>
+                </div>
+              ) : sel.trade ? (
                 <dl className="tl-facts">
                   <div><dt>Bought</dt><dd>{sel.trade.buyTime} at {price(sel.trade.buyPrice)}<span className="muted small">{sel.trade.qty} shares for {money(sel.potStart, sel.currency)}</span></dd></div>
                   <div><dt>Why</dt><dd className="muted">{sel.trade.reason}</dd></div>
@@ -316,9 +339,9 @@ function DayCard({ days, date, onPick, note, lab, symbol, setSymbol }: {
                     <td>{s.symbol}</td>
                     {s.trade ? (
                       <>
-                        <td>{s.trade.buyTime} · {price(s.trade.buyPrice)}</td>
+                        <td>{tradesOf(s)[0].buyTime} · {price(tradesOf(s)[0].buyPrice)}</td>
                         <td>{s.trade.sellTime ?? "holding"}{s.trade.sellPrice !== null && ` · ${price(s.trade.sellPrice)}`}</td>
-                        <td className="muted tl-wrap">{s.trade.exit}</td>
+                        <td className="muted tl-wrap">{tradesOf(s).length > 1 ? `${tradesOf(s).length} trades · last: ${s.trade.exit || "holding"}` : s.trade.exit}</td>
                         <td className={tone(s.pnl)}>{signed(s.pnl, s.currency)}</td>
                       </>
                     ) : <td colSpan={4} className="muted tl-wrap">{s.note}</td>}
@@ -349,7 +372,7 @@ function Stocks({ lab }: { lab: LabView }) {
 function RulesList({ rules }: { rules: Rules }) {
   const items = [
     ["Watch", `the first ${rules.range_minutes} minutes of the session. Their high and low are the opening range.`],
-    ["Buy", `at the next minute's open once a minute closes above the range high. One trade per stock per day; no new buys in the last ${rules.no_entry_last_minutes} minutes.`],
+    ["Buy", `at the next minute's open once a minute closes above the range high. The base rules make one trade per stock per day (the rules each market runs, above, can add more); no new buys in the last ${rules.no_entry_last_minutes} minutes.`],
     ["Stop", `the range low, but never more than ${rules.max_stop_pct}% under the buy price.`],
     ["Lock profit", `once up ${rules.trail_after_pct}%, a trailing stop follows the best price ${rules.trail_pct}% behind it and sells on a pullback.`],
     ["Close", `anything still held is sold ${rules.exit_before_close_minutes} minutes before the close. Nothing is held overnight.`],

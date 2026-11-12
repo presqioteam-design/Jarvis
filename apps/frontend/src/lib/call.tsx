@@ -3,7 +3,7 @@
  * Home, Leads, Chat and back. It ends only when you hang up or tell Jarvis to.
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { VoiceCall, type CallState } from "./voice";
+import { VoiceCall, type CallState, type Task } from "./voice";
 
 type Allowance = { callsLeft: number | null; callsPerDay: number; maxSeconds: number };
 
@@ -20,6 +20,8 @@ type Call = {
   end: () => void;
   toggleMute: () => void;
   levels: () => { you: number; jarvis: number };
+  /** The last few commands Jarvis ran in this call, newest first. */
+  tasks: Task[];
 };
 
 const CallContext = createContext<Call | null>(null);
@@ -43,6 +45,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const [muted, setMuted] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [allowance, setAllowance] = useState<Allowance | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const call = useRef<VoiceCall | null>(null);
   const live = isLive(state);
 
@@ -52,10 +55,10 @@ export function CallProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(id);
   }, [live]);
 
-  // once the call is over, clear the last lines so the screen is clean for the next one
+  // once the call is over, clear the last lines and the board so the screen is clean for the next one
   useEffect(() => {
-    if (state !== "ended") return;
-    const id = setTimeout(() => { setYou(""); setJarvis(""); }, 1800);
+    if (state !== "ended" && state !== "error") return;
+    const id = setTimeout(() => { setYou(""); setJarvis(""); setTasks([]); }, 1800);   // the board fades out too
     return () => clearTimeout(id);
   }, [state]);
 
@@ -86,11 +89,13 @@ export function CallProvider({ children }: { children: ReactNode }) {
     setJarvis("");
     setSeconds(0);
     setMuted(false);
+    setTasks([]);
     const c = new VoiceCall({
       state: setState,
       caption: (who, text) => (who === "you" ? setYou(text) : setJarvis(text)),
       error: setError,
       info: setAllowance,
+      task: (t) => setTasks((list) => [t, ...list.filter((x) => x.id !== t.id)].slice(0, 3)),
     });
     call.current = c;
     await c.start();
@@ -108,7 +113,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const levels = useCallback(() => call.current?.levels() ?? { you: 0, jarvis: 0 }, []);
 
   return (
-    <CallContext.Provider value={{ state, live, you, jarvis, error, muted, seconds, allowance, begin, end, toggleMute, levels }}>
+    <CallContext.Provider value={{ state, live, you, jarvis, error, muted, seconds, allowance, begin, end, toggleMute, levels, tasks }}>
       {children}
     </CallContext.Provider>
   );

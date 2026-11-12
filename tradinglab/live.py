@@ -141,18 +141,24 @@ def _update(key: str, s: str, candles: list[dict], pot: float, state: dict, line
     _today[s] = candles
     _fetched_at[s] = time.monotonic()
     r = simulate_day(key, candles, pot, rules, live=True, bench=bench)
-    t = r["trade"]
-    prev = state["stocks"].get(s, {}).get("state")
+    before = state["stocks"].get(s, {})
+    # what was already announced: how many buys, and how many sells (older records only had one trade)
+    bought = before.get("bought", 1 if before.get("trade") else 0)
+    sold = before.get("soldCount", 1 if before.get("state") == "sold" else 0)
+    trades = r["trades"]
     state["stocks"][s] = {"state": r["state"], "note": r["note"], "pnl": r["pnl"],
                           "price": candles[-1]["close"] if candles else None,
                           "time": candles[-1]["date"][11:16] if candles else None, "range": r["range"],
-                          "done": r["state"] in ("sold", "no_trade"), "trade": t}
+                          "done": r["state"] in ("sold", "no_trade"), "trade": r["trade"], "trades": trades,
+                          "bought": len(trades), "soldCount": sum(1 for t in trades if t.get("sellTime"))}
     sym = "₹" if MARKETS[key].currency == "INR" else "$"
-    if t and prev not in ("holding", "sold"):
-        lines.append(f"🟢 Bought {s} at {t['buyTime']}: {sym}{t['buyPrice']:,.2f} ({t['reason']})")
-    if r["state"] == "sold" and prev != "sold":
-        lines.append(f"{'✅' if r['pnl'] > 0 else '🔻'} Sold {s} at {t['sellTime']}: {sym}{t['sellPrice']:,.2f}, "
-                     f"{t['exit']}. Result {'+' if r['pnl'] >= 0 else '−'}{sym}{abs(r['pnl']):,.2f}")
+    for n, t in enumerate(trades):
+        again = " again" if n else ""
+        if n >= bought:
+            lines.append(f"🟢 Bought {s}{again} at {t['buyTime']}: {sym}{t['buyPrice']:,.2f} ({t['reason']})")
+        if t.get("sellTime") and n >= sold:
+            lines.append(f"{'✅' if t['pnl'] > 0 else '🔻'} Sold {s} at {t['sellTime']}: {sym}{t['sellPrice']:,.2f}, "
+                         f"{t['exit']}. Result {'+' if t['pnl'] >= 0 else '−'}{sym}{abs(t['pnl']):,.2f}")
 
 
 async def check_one(key: str, symbol: str, state: dict, pot: float, rules=RULES) -> tuple[dict, list[str], bool]:

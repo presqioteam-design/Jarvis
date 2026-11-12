@@ -3,6 +3,7 @@ The end-of-day report: a Telegram message plus the same news as a voice note.
 Reads only today's messages, a few counts and the leads with follow-ups.
 """
 
+import logging
 from collections import Counter
 from datetime import datetime, time, timedelta
 
@@ -12,6 +13,8 @@ from ..config import get_settings
 from ..firebase import col
 from ..timeutil import now_local
 from . import leads, outreach, prefs, telegram, usage, voice
+
+log = logging.getLogger(__name__)
 
 
 def count(q) -> int:
@@ -46,7 +49,17 @@ def gather() -> dict:
         "awaiting": len(waiting),
         "hot": [l["name"] for l in hot],
         "auto": outreach.auto_enabled(),
+        "lab": _lab(),
     }
+
+
+def _lab() -> dict | None:
+    try:
+        from tradinglab.jarvis_api import report_summary   # the lab lives in its own folder
+        return report_summary()
+    except Exception:
+        log.exception("Couldn't read the Trading Lab for the report")
+        return None
 
 
 def written(r: dict) -> str:
@@ -67,7 +80,9 @@ def written(r: dict) -> str:
     ]
     if r["hot"]:
         lines += ["", "🔥 Interested: " + ", ".join(r["hot"])]
-    lines += ["", f"📈 Gemini today: {usage.summary()}"]
+    if r.get("lab"):
+        lines += ["", *r["lab"]["lines"]]
+    lines += ["", f"🧠 Gemini today: {usage.summary()}"]
     if r["left"] == 0:
         lines += ["", "⚠️ No businesses with an email are left. Scan another area to find more."]
     return "\n".join(lines)
@@ -86,6 +101,8 @@ def spoken(r: dict) -> str:
     ]
     if r["hot"]:
         parts.append("Interested: " + ", ".join(r["hot"][:5]) + ". You may want to call them.")
+    if r.get("lab"):
+        parts.append(r["lab"]["spoken"])
     return " ".join(parts)
 
 

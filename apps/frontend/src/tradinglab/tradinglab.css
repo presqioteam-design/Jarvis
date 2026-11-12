@@ -148,3 +148,10 @@
 /* yardstick and swing */
 .tl-yard { display: block; margin-top: 4px; }
 .tl-swing-stats { margin: 4px 0 8px; }
+
+/* a stock that traded more than once in a day */
+.tl-trades { display: flex; flex-direction: column; margin-top: 8px; }
+.tl-trade-row { display: grid; grid-template-columns: 24px 1fr auto; gap: 4px 12px; align-items: baseline; padding: 8px 4px; border-top: 1px solid var(--line, rgba(255,255,255,.08)); }
+.tl-trade-row .muted.small { display: block; margin-top: 2px; }
+.tl-trade-n { font-weight: 600; opacity: .6; font-variant-numeric: tabular-nums; }
+.tl-trade-total { font-weight: 600; }

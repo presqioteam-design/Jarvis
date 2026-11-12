@@ -6,7 +6,10 @@ shows every buy and sell on the day's candles. No real money, no broker, no real
 
 ## The strategy ([rules.py](rules.py)): opening-range breakout with a trailing profit lock
 1. The first 15 minutes set the opening range (their high and low).
-2. **Buy** at the next minute's open once a minute closes above the range high. One trade per stock per day, none in the last hour.
+2. **Buy** at the next minute's open once a minute closes above the range high. No new buys in the last hour.
+   Both markets now run **"Quick profits, up to 3 trades a day"** (`quick3` in rules.py): the first buy also needs the
+   volume, VWAP and market-up filters; once a trade has been 0.5% up it sells on the first minute that closes lower,
+   then buys again when a minute closes above the one before (up to 3 trades a stock a day).
 3. **Stop loss** at the range low, never more than 1.5% under the buy.
 4. **Lock profit**: once up 1%, a trailing stop follows the best price 0.5% behind it.
 5. **Close**: anything held is sold 15 minutes before the close.
