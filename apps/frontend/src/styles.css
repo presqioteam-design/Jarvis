@@ -392,7 +392,7 @@ td.strong { color: var(--c-customer); font-weight: 600; }
 @keyframes barin { from { transform: scaleY(0); } }
 @keyframes draw { to { stroke-dashoffset: 0; } }
 @media (prefers-reduced-motion: reduce) { .pres-stat, .pres-chart rect { animation: none; } .pres-line { animation: none; stroke-dashoffset: 0; } }
-@media (max-width: 700px) { .voice-page > .char-card.board { max-height: 48vh; } .pres-stat strong { font-size: 17px; } }
+@media (max-width: 700px) { .voice-page > .char-card, .voice-page > .char-card.board { width: calc(100vw - 120px); max-height: 56vh; } .pres-stat strong { font-size: 17px; } .pres-stats { grid-template-columns: 1fr 1fr; } }
 @keyframes cardscan { from { background-position: -50% 0; } to { background-position: 150% 0; } }
 @media (prefers-reduced-motion: reduce) { .char-card > *, .char-card-scan { animation: none; } }
 .voice-status { margin-top: -8px; font-size: 13px; letter-spacing: .4em; text-transform: uppercase; color: var(--hud); min-height: 20px; text-shadow: 0 0 12px rgba(79,216,255,.55); }

@@ -28,3 +28,6 @@ apps/agent/state.json
 
 # Trading Lab strategy tester: downloaded candles stay on this computer
 tradinglab/.cache/
+
+# the avatar's source files (Avaturn model, Mixamo clips); the site uses public/avatar/
+apps/frontend/avatar-source/

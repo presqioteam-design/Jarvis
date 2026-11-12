@@ -2,6 +2,7 @@ import { useEffect, useRef, type RefObject } from "react";
 import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { CallState } from "../lib/voice";
+import { loadHuman, type Human } from "./human";
 
 /**
  * Jarvis as a smooth, stylised person standing on a softly lit stage (three.js, loaded only when picked).
@@ -231,6 +232,17 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
       return { hip, knee, ankle, side };
     });
 
+    // the realistic Jarvis (human.ts) loads in the background; the figure above is shown only if it can't load
+    let human: Human | null = null, gone = false;
+    char.visible = false;
+    loadHuman().then((h) => {
+      if (gone) return h.dispose();
+      human = h;
+      scene.add(h.root);
+      x = reduced ? 0 : minX - 0.4;   // walks on once he's here
+      entering = !reduced;
+    }).catch(() => { char.visible = true; });
+
     // ── data link: hologram over the hand, beam to the card, particle stream ──
     const scanMat = keep(new THREE.MeshBasicMaterial({ color: CYAN, wireframe: true, transparent: true, opacity: 0, toneMapped: false, blending: THREE.AdditiveBlending, depthWrite: false }));
     const scan = new THREE.Mesh(keep(new THREE.IcosahedronGeometry(0.13, 1)), scanMat);
@@ -322,7 +334,9 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
       prevState = s;
 
       // where to stand: centre, aside for the card, or a short stroll while idle
-      const home = holding && side ? -1.0 : 0;
+      const cardLeft = !!human;   // the realistic one points with his right hand: the card sits on the viewer's left
+      // wide: he stands beside the card; a phone: he steps to the right edge, the card takes the left
+      const home = holding ? (side ? (cardLeft ? 1.0 : -1.0) : maxX - 0.45) : 0;
       if (inCall || holding || reduced) { targetX = home; away = false; wanderAt = Math.max(wanderAt, t + 15); }
       else if (!entering && t > wanderAt && walkW < 0.05) {
         away = !away;
@@ -333,15 +347,17 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
       const dx = targetX - x;
       const walking = Math.abs(dx) > 0.03 ? 1 : 0;
       walkW += (walking - walkW) * (1 - Math.exp(-dt * 5));
-      x += Math.sign(dx) * Math.min(Math.abs(dx), 1.15 * dt * Math.max(walkW, 0.15) * walking);
+      const speed = human ? 1.9 : 1.15;
+      x += Math.sign(dx) * Math.min(Math.abs(dx), speed * dt * Math.max(walkW, 0.15) * walking);
       phase += dt * Math.PI * 2 * 0.85 * walkW;   // stride matched to speed so the feet don't slide
       if (entering && !walking) { entering = false; waveUntil = t + 2.2; }
-      char.position.x = x;
-      size += ((holding && !side ? 0.62 : 1) - size) * k * 0.5;   // on a phone it steps back so the card fits above its head
-      char.scale.setScalar(size);
-      const yawTarget = walking ? Math.sign(dx) * 1.15 : (holding && side ? 0.3 : 0) + gaze.x * 0.18;
+      const body = human ? human.root : char;
+      body.position.x = x;
+      size += ((holding && !side ? 0.55 : 1) - size) * k * 0.5;   // on a phone he steps back a little, beside the card
+      body.scale.setScalar(size);
+      const yawTarget = walking ? Math.sign(dx) * (human ? Math.PI / 2 : 1.15) : (holding && side ? (cardLeft ? -0.35 : 0.3) : 0) + gaze.x * 0.18;
       yaw += (yawTarget - yaw) * k * 0.6;
-      char.rotation.y = yaw;
+      body.rotation.y = yaw;
       spot.position.x += (x - spot.position.x) * k * 0.5;
       key.position.set(x + 2.5, 5, 4);
       key.target.position.set(x, 1, 0);
@@ -353,6 +369,16 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
       gaze.x += (gaze.tx - gaze.x) * k * 0.5;
       gaze.y += (gaze.ty - gaze.y) * k * 0.5;
 
+      talk += ((s === "speaking" ? Math.min(1, lv.jarvis * 1.8) : 0) - talk) * (1 - Math.exp(-dt * 3));
+      if (bye && !holding && !walking) { bye = false; waveUntil = t + 2.4; }
+      const waving = t < waveUntil && !walking;
+      if (holding && t > lookAway) lookAway = t + 2 + Math.random() * 2;
+      const atCard = working || (holding && lookAway - t > 1.2);
+
+      if (human) {
+        human.update({ dt, t, state: s, jarvis: lv.jarvis, you: lv.you, walking: !!walking, walkW, waving, working, holding,
+          lookAtCard: atCard && side, cardSide: -1, gazeX: gaze.x, gazeY: gaze.y, moveSpeed: speed * size });
+      } else {
       // legs: a walk cycle that fades in and out
       const A = 0.5 * walkW;
       for (const l of legs) {
@@ -370,9 +396,6 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
       spine.rotation.z = -hips.rotation.z * 0.8;
 
       // arms: swing when walking, gesture while talking, wave hello, hold the data up
-      talk += ((s === "speaking" ? Math.min(1, lv.jarvis * 1.8) : 0) - talk) * (1 - Math.exp(-dt * 3));
-      if (bye && !holding && !walking) { bye = false; waveUntil = t + 2.4; }
-      const waving = t < waveUntil && !walking;
       arms.forEach((r, i) => {
         const p = phase + (r.side > 0 ? 0 : Math.PI);
         let tx = 0.04 + 0.8 * A * Math.sin(p), tz = r.side * 0.1, te = -0.2 - 0.3 * walkW;
@@ -395,8 +418,6 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
       });
 
       // head: looks at you, the card, or where it's walking; nods along
-      if (holding && t > lookAway) lookAway = t + 2 + Math.random() * 2;
-      const atCard = working || (holding && lookAway - t > 1.2);
       let hy = walking ? 0 : gaze.x * 0.4;
       let hx = gaze.y * 0.2;
       let hz = 0;
@@ -422,6 +443,7 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
       });
       open += ((s === "speaking" ? Math.min(1, lv.jarvis * 2.2) : 0) - open) * Math.min(1, dt * 25);
       mouth.scale.set(1.05 - open * 0.25, 0.14 + open * 0.8, 0.35);
+      }
 
       // dust drifts up
       for (let i = 0; i < DUST; i++) {
@@ -431,25 +453,24 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
       dustGeo.attributes.position.needsUpdate = true;
 
       // the card follows the hand; the beam and particles join them
-      arms[1].hand.getWorldPosition(handW);
-      head.getWorldPosition(headW);
+      if (human) { human.hand(handW); human.headTop(headW); }
+      else { arms[1].hand.getWorldPosition(handW); head.getWorldPosition(headW).add(v.set(0, 1.15, 0)); }
       const el = card.current;
       const cw = el?.offsetWidth ?? 0, ch = el?.offsetHeight ?? 0;
-      if (side) anchor.copy(handW).add(v.set(0.45, 0.3, 0));
-      else anchor.copy(headW).add(v.set(0, 1.15, 0));
+      anchor.copy(handW).add(v.set(side && !cardLeft ? 0.45 : -0.45, 0.3, 0));
       if (el && holding) {   // a card that's fading out stays where it was
         // place the card at the anchor, kept on screen (below the top bar); then aim the beam where it really is
         v.copy(anchor).project(camera);
         const px = ((v.x + 1) / 2) * W, py = ((1 - v.y) / 2) * H;
-        const left = THREE.MathUtils.clamp(side ? px : px - cw / 2, 8, Math.max(8, W - cw - 8));
-        const top = THREE.MathUtils.clamp(side ? py - ch / 2 : py - ch, 60, Math.max(60, H - ch - 8));
+        const left = side ? THREE.MathUtils.clamp(cardLeft ? px - cw : px, 8, Math.max(8, W - cw - 8)) : 12;
+        const top = THREE.MathUtils.clamp(side ? py - ch / 2 : 60, 60, Math.max(60, H - ch - 8));
         el.style.transform = `translate(${left}px, ${top}px)`;
         el.style.visibility = "visible";
-        const sx = side ? left : left + cw / 2, sy = side ? top + ch / 2 : top + ch;
+        const sx = side && !cardLeft ? left : left + cw, sy = top + ch / 2;   // the beam meets the card's edge nearest him
         anchor.set((sx / W) * 2 - 1, 1 - (sy / H) * 2, v.z).unproject(camera);
       }
-      if (side) { a.copy(anchor).add(v.set(0, ch * u * 0.42, 0)); b.copy(anchor).add(v.set(0, -ch * u * 0.42, 0)); }
-      else { a.copy(anchor).add(v.set(-cw * u * 0.4, 0, 0)); b.copy(anchor).add(v.set(cw * u * 0.4, 0, 0)); }
+      a.copy(anchor).add(v.set(0, ch * u * 0.42, 0));
+      b.copy(anchor).add(v.set(0, -ch * u * 0.42, 0));
       const apex = handW.clone().add(v.set(0, 0.06, 0.05));
       mid.copy(a).lerp(b, working ? 0.5 + 0.5 * Math.sin(t * 2.4) : 0.5);   // a scan line runs along the card while working
       [apex, a, mid, apex, mid, b].forEach((p, i) => beamPos.set([p.x, p.y, p.z], i * 3));
@@ -476,6 +497,8 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
 
     return () => {
       cancelAnimationFrame(raf);
+      gone = true;
+      human?.dispose();
       ro.disconnect();
       window.removeEventListener("pointermove", move);
       renderer.domElement.removeEventListener("webglcontextlost", lost);
