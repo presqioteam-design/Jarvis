@@ -5,7 +5,8 @@ import type { AvatarFocus } from "../components/Avatar";
 import Icon from "../components/Icon";
 import type { CallState, Task } from "../lib/voice";
 import { clockOf, useCall } from "../lib/call";
-import { prepareVoice, warmUp } from "../lib/api";
+import { prepareVoice, voiceShow, warmUp } from "../lib/api";
+import type { Display } from "../lib/display";
 
 // three.js is only downloaded when someone switches to the avatar
 const Avatar = lazy(() => import("../components/Avatar"));
@@ -69,6 +70,16 @@ export default function Voice() {
     return () => clearTimeout(id);
   }, [cardOn, task, focus]);
 
+  // today's numbers for the avatar's room (its wall panels and ticker), refreshed every few minutes
+  const [wall, setWall] = useState<Display | null>(null);
+  useEffect(() => {
+    if (look !== "avatar") return;
+    const load = () => voiceShow("overview").then((r) => setWall(r.display)).catch(() => undefined);
+    void load();
+    const id = setInterval(load, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [look]);
+
   useEffect(() => {
     warmUp(); // wake the server while you read the page
     if (!live) void prepareVoice(); // and have Jarvis's briefing ready before you tap
@@ -100,7 +111,7 @@ export default function Voice() {
 
       {look === "avatar" && (
         <Suspense fallback={null}>
-          <Avatar state={state} levels={levels} focus={focus} onFail={() => pick("orb")} frame={stageRef} card={cardRef} />
+          <Avatar state={state} levels={levels} focus={focus} onFail={() => pick("orb")} frame={stageRef} card={cardRef} wall={wall} />
         </Suspense>
       )}
       {/* the character holds this card up; with the orb it floats at the top instead. It fades out rather than vanishing. */}

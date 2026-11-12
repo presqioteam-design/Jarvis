@@ -3,6 +3,8 @@ import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { CallState } from "../lib/voice";
 import { loadHuman, type Human } from "./human";
+import { buildPenthouse, type Penthouse } from "./penthouse";
+import type { Display } from "../lib/display";
 
 /**
  * Jarvis as a smooth, stylised person standing on a softly lit stage (three.js, loaded only when picked).
@@ -25,6 +27,8 @@ type Props = {
   onFail: () => void;
   frame: RefObject<HTMLElement | null>;
   card: RefObject<HTMLElement | null>;
+  /** today's numbers for the room's wall panels and ticker */
+  wall?: Display | null;
 };
 
 const CYAN = new THREE.Color(0x4fd8ff);
@@ -47,10 +51,12 @@ function radialTexture(asMask = false): THREE.Texture {
 type Arm = { shoulder: THREE.Group; elbow: THREE.Group; wrist: THREE.Group; hand: THREE.Mesh; side: number };
 type Leg = { hip: THREE.Group; knee: THREE.Group; ankle: THREE.Group; side: number };
 
-export default function Avatar({ state, levels, focus, onFail, frame, card }: Props) {
+export default function Avatar({ state, levels, focus, onFail, frame, card, wall = null }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const live = useRef({ state, levels, focus, onFail });
-  live.current = { state, levels, focus, onFail };
+  const live = useRef({ state, levels, focus, onFail, wall });
+  live.current = { state, levels, focus, onFail, wall };
+  const room = useRef<Penthouse | null>(null);
+  useEffect(() => { room.current?.setWall(wall); }, [wall]);
 
   useEffect(() => {
     const host = ref.current!;
@@ -64,7 +70,7 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.setClearColor(0x000000, 0);
+    renderer.setClearColor(0x1c1b2d, 1);   // the night sky, behind the room
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     host.appendChild(renderer.domElement);
@@ -83,7 +89,7 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
     pmrem.dispose();
 
     const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
-    scene.add(new THREE.HemisphereLight(0xd4ecff, 0x0a1826, 0.75));
+    scene.add(new THREE.HemisphereLight(0xd4ecff, 0x0a1826, 0.45));
     const key = new THREE.DirectionalLight(0xffffff, 2.3);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
@@ -98,11 +104,13 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
     scene.add(rim, fill);
 
     const radial = keep(radialTexture());
-    const floor = new THREE.Mesh(keep(new THREE.PlaneGeometry(14, 14)),
-      keep(new THREE.MeshStandardMaterial({ color: 0x0a1c2c, roughness: 0.9, envMapIntensity: 0.25, transparent: true, alphaMap: keep(radialTexture(true)), depthWrite: false })));
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.002;
-    scene.add(floor);
+    // the room: a penthouse at night with the city behind the glass (penthouse.ts); its panorama replaces the studio light
+    const penthouse = buildPenthouse(scene, renderer);
+    room.current = penthouse;
+    penthouse.setWall(live.current.wall);
+    const neon = new THREE.DirectionalLight(0xb06cff, 1.1);   // city neon from behind, for a coloured rim
+    neon.position.set(3, 2.5, -5);
+    scene.add(neon);
     const shadowFloor = new THREE.Mesh(keep(new THREE.PlaneGeometry(30, 30)), keep(new THREE.ShadowMaterial({ opacity: 0.42 })));
     shadowFloor.rotation.x = -Math.PI / 2;
     shadowFloor.receiveShadow = true;
@@ -491,6 +499,7 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
       dotGeo.attributes.position.needsUpdate = true;
       dotMat.opacity += ((holding && el ? (working ? 0.9 : 0.4) : 0) - dotMat.opacity) * k;
 
+      penthouse.update(dt, t, holding, side);
       renderer.render(scene, camera);
     };
     frameFn();
@@ -499,6 +508,8 @@ export default function Avatar({ state, levels, focus, onFail, frame, card }: Pr
       cancelAnimationFrame(raf);
       gone = true;
       human?.dispose();
+      penthouse.dispose();
+      room.current = null;
       ro.disconnect();
       window.removeEventListener("pointermove", move);
       renderer.domElement.removeEventListener("webglcontextlost", lost);
