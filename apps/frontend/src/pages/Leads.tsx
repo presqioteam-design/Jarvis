@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   collection, doc, documentId, getDocs, limit, onSnapshot, query, startAfter, where, type QueryDocumentSnapshot,
 } from "firebase/firestore";
-import { CATEGORIES, categoryLabel, type AreaSummary, type Campaign, type CitySummary, type Lead, type LeadStatus } from "@jarvis/shared";
+import { CATEGORIES, categoryLabel, type AreaSummary, type CitySummary, type Lead, type LeadStatus } from "@jarvis/shared";
 import { db, userPath } from "../lib/firebase";
 import { approveAllWithEmail, blockLead, errorText, setLeadStatus } from "../lib/api";
 import { useUser } from "../lib/auth";
@@ -87,9 +87,11 @@ export default function Leads() {
         : "Couldn't load leads. Check that the Firestore rules are published.");
   }, []);
 
+  // every city with leads, from the city summaries: scans and the night explorer both keep these up to date
+  // (the explorer saves leads without a scan, so its cities never showed when the list came from scans)
   useEffect(
-    () => onSnapshot(collection(db, userPath(user.uid, "campaigns")), (s) => {
-      const names = s.docs.map((d) => (d.data() as Campaign).city).filter((c): c is string => !!c);
+    () => onSnapshot(collection(db, userPath(user.uid, "cities")), (s) => {
+      const names = s.docs.map((d) => (d.data() as CitySummary).city).filter((c): c is string => !!c);
       setCities([...new Set(names)].sort());
     }, onError),
     [user.uid, onError],
