@@ -87,9 +87,73 @@ def _usage_permission() -> dict:
 
 # ── scheduled jobs (the Cloudflare cron) ─────────────────────────────────────
 
-def record_run(job: str) -> None:
-    """Each cron job stamps when it ran, so the page can tell if the schedule stopped."""
+def record_run(job: str) -> str | None:
+    """Each cron job stamps when it ran, so the page can tell if the schedule stopped.
+    Returns when it ran before (ISO), for the gap warning."""
+    prev = ((prefs.ref().get().to_dict() or {}).get("lastRun") or {}).get(job)
     prefs.ref().set({"lastRun": {job: now_utc().isoformat()}}, merge=True)
+    return prev
+
+
+# The daytime cron runs every 30 minutes, 9:30 AM–8 PM IST, Monday–Saturday (apps/cron/wrangler.toml)
+TICK_FIRST, TICK_LAST, TICK_DAYS = (9, 30), (20, 0), range(0, 6)
+GAP_SLACK = timedelta(minutes=10)
+
+
+def _previous_tick_slot(now: datetime) -> datetime:
+    """When the daytime cron should last have run before `now` (local time)."""
+    t = now - timedelta(minutes=30)
+    while True:
+        first = t.replace(hour=TICK_FIRST[0], minute=TICK_FIRST[1], second=0, microsecond=0)
+        last = t.replace(hour=TICK_LAST[0], minute=TICK_LAST[1], second=0, microsecond=0)
+        if t.weekday() in TICK_DAYS and first <= t <= last:
+            return t
+        t = (last if t.weekday() in TICK_DAYS and t > last else (t - timedelta(days=1)).replace(hour=TICK_LAST[0], minute=TICK_LAST[1]))
+
+
+def missed_during(start: datetime, end: datetime) -> list[str]:
+    """What Jarvis would have done between two local times (sampled every 15 minutes)."""
+    from zoneinfo import ZoneInfo
+    ny = ZoneInfo("America/New_York")
+    hits: dict[str, bool] = {}
+    t = start
+    while t < end:
+        hm, wd = t.strftime("%H:%M"), t.weekday()
+        if wd < 6 and "10:00" <= hm < "14:00":
+            hits["automatic emails"] = True
+        if wd < 6 and "09:30" <= hm <= "20:00":
+            hits["reply checks"] = True
+        if "00:30" <= hm < "05:00":
+            hits["the night explorer"] = True
+        if wd < 5 and "09:15" <= hm < "15:30":
+            hits["India live trading"] = True
+        u = t.astimezone(ny)
+        if u.weekday() < 5 and "09:30" <= u.strftime("%H:%M") < "16:00":
+            hits["US live trading"] = True
+        t += timedelta(minutes=15)
+    return list(hits)
+
+
+async def gap_warning(prev_iso: str | None) -> str:
+    """If the daytime cron missed runs since `prev_iso`, tell the admin on Telegram what was missed
+    (the scheduled jobs reach Jarvis from Cloudflare; when they stop, nothing else notices)."""
+    if not prev_iso:
+        return ""
+    tz = get_settings().tz
+    now, prev = now_local(), datetime.fromisoformat(prev_iso).astimezone(tz)
+    # quiet for a single missed run (a slow wake-up of the free server); speak up from two in a row
+    if prev >= _previous_tick_slot(_previous_tick_slot(now) + timedelta(minutes=1)) - GAP_SLACK:
+        return ""
+    missed = missed_during(prev, now)
+    fmt = lambda d: d.strftime("%a %d %b, %I:%M %p").replace(" 0", " ")   # noqa: E731
+    text = (f"⚠️ Jarvis wasn't reached by its schedule from {fmt(prev)} to {fmt(now)}."
+            + (f" Missed: {', '.join(missed)}." if missed else "")
+            + " It's running again now. If this repeats, check Render (Events) and Cloudflare (jarvis-cron → Observability).")
+    try:
+        await telegram.send(text)
+    except Exception:
+        pass
+    return text
 
 
 def _jobs() -> dict:

@@ -48,6 +48,37 @@ class TomTomLimit(Exception):
     """TomTom refused: the free daily searches are used up (or the key is over its rate)."""
 
 
+# TomTom's free plan also limits searches per second. From the server (close to TomTom) back-to-back
+# searches went out fast enough to be refused, and one refusal stopped a whole explorer area.
+MIN_GAP_S = 0.3                      # at most ~3 searches a second, from anywhere in the app
+RETRY_WAITS_S = (2, 5, 15)           # "too many requests": wait and try again, then give up
+_last_search = 0.0
+_pace = asyncio.Lock()
+
+
+async def _tomtom_get(client: httpx.AsyncClient, url: str, params: dict) -> httpx.Response:
+    """One TomTom search, paced, retried when TomTom says "too many" (429). Raises TomTomLimit
+    if it keeps refusing (or 403: the daily allowance or the key)."""
+    global _last_search
+    for wait in (*RETRY_WAITS_S, None):
+        async with _pace:
+            gap = MIN_GAP_S - (asyncio.get_running_loop().time() - _last_search)
+            if gap > 0:
+                await asyncio.sleep(gap)
+            _last_search = asyncio.get_running_loop().time()
+        r = await client.get(url, params=params)
+        usage.count_map_searches(1)
+        if r.status_code == 429 and wait is not None:
+            log.warning("TomTom says too many searches; waiting %ss", wait)
+            await asyncio.sleep(wait)
+            continue
+        if r.status_code in (403, 429):
+            raise TomTomLimit()
+        r.raise_for_status()
+        return r
+    raise TomTomLimit()
+
+
 async def tomtom_box(client: httpx.AsyncClient, box: dict, cat: Category) -> tuple[list[dict], bool]:
     """One category inside one box -> (places, full). TomTom caps a search at 100 results,
     so `full` (any search came back with 100) means: split the box."""
@@ -56,11 +87,9 @@ async def tomtom_box(client: httpx.AsyncClient, box: dict, cat: Category) -> tup
     out, full = {}, False
     for word, ids in cat.tomtom:
         if ids:
-            r = await client.get(f"{TOMTOM}/categorySearch/{word}.json", params={**params, "categorySet": ids})
+            r = await _tomtom_get(client, f"{TOMTOM}/categorySearch/{word}.json", {**params, "categorySet": ids})
         else:   # no TomTom category for it: search by name inside the box
-            r = await client.get(f"{TOMTOM}/poiSearch/{word}.json", params=params)
-        usage.count_map_searches(1)
-        r.raise_for_status()
+            r = await _tomtom_get(client, f"{TOMTOM}/poiSearch/{word}.json", params)
         results = r.json().get("results", [])
         full = full or len(results) >= 100
         for x in results:

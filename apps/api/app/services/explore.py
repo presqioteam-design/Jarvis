@@ -205,20 +205,30 @@ def pending_cats(area: dict, wanted: list[str]) -> list[str]:
 
 async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
     box = leads.square_around(area["lat"], area["lon"], AREA_RADIUS_M)
-    found, squares = {}, 0
+    found, squares, searched, failed = {}, 0, [], []
     async with httpx.AsyncClient(timeout=30) as client:
         for key in cats:
             cat = categories.get(key)
             queue, used = leads.grid(box, leads.START_SQUARE_KM), 0
-            while queue and used < MAX_SQUARES_PER_CATEGORY:
-                square = queue.pop(0)
-                places, full = await sources.tomtom_box(client, square, cat)
-                used += 1
-                if full and leads.width_km(square) > leads.MIN_SQUARE_KM:
-                    queue.extend(leads.grid(square, leads.width_km(square) / 2))
-                for h in places:
-                    found.setdefault(h["id"], h)
+            try:
+                while queue and used < MAX_SQUARES_PER_CATEGORY:
+                    square = queue.pop(0)
+                    places, full = await sources.tomtom_box(client, square, cat)
+                    used += 1
+                    if full and leads.width_km(square) > leads.MIN_SQUARE_KM:
+                        queue.extend(leads.grid(square, leads.width_km(square) / 2))
+                    for h in places:
+                        found.setdefault(h["id"], h)
+                searched.append(key)
+            except sources.TomTomLimit:
+                failed.append(f"{cat.label}: TomTom refused (daily allowance or too many searches)")
+                break   # TomTom said no: the rest would be refused too; they're tried next time
+            except httpx.HTTPError as e:
+                failed.append(f"{cat.label}: {type(e).__name__}")   # one kind failing doesn't lose the area
+                log.warning("Explorer: %s in %s failed: %s", key, area["name"], e)
             squares += used
+    if not searched:
+        raise RuntimeError("TomTom searches all failed: " + "; ".join(failed))
     # OpenStreetMap lists many more websites and emails than TomTom for most categories
     for h in await sources.osm_places(box, [categories.get(k) for k in cats]):
         found.setdefault(h["id"], h)
@@ -227,7 +237,8 @@ async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
     rows = await leads.save_reachable(list(found.values()), "explore", city, area["name"])
     add_to_city(city, rows)
     by_cat = dict(Counter(r["category"] for r in rows))
-    return {"found": len(found), "added": len(rows), "withEmail": len(rows), "squares": squares, "byCategory": by_cat}
+    return {"found": len(found), "added": len(rows), "withEmail": len(rows), "squares": squares, "byCategory": by_cat,
+            "searched": searched, "failed": failed}
 
 
 def add_to_city(city: str, rows: list[dict]) -> None:
@@ -331,13 +342,16 @@ async def _run_one() -> None:
             area = city["areas"][idx]
             cats = pending_cats(area, wanted)
             stats = await explore_area(city["city"], area, cats)
-            done_cats = sorted(set(area.get("cats") or (["hotels"] if area.get("status") == "done" else [])) | set(cats))
+            done_cats = sorted(set(area.get("cats") or (["hotels"] if area.get("status") == "done" else [])) | set(stats["searched"]))
             city["areas"][idx] |= {"status": "done", "cats": done_cats, "doneAt": now_utc().isoformat(),
-                                   **{k: v for k, v in stats.items() if k != "byCategory"}}
+                                   **{k: v for k, v in stats.items() if k not in ("byCategory", "searched", "failed")}}
             ref.update({"areas": city["areas"]})
             record(city["city"], area["name"], stats)
-        except Exception:
+            if stats["failed"]:
+                activity.log("error", f"Explorer, {area['name']} ({city['city']}): skipped " + "; ".join(stats["failed"]) + " (tried again next time)")
+        except Exception as e:
             log.exception("Explorer run failed")
+            await _report_failure(e)
 
 
 def by_category_text(counts: dict) -> str:
@@ -354,6 +368,20 @@ def record(city: str, area: str, stats: dict) -> None:
     settings_ref().set({"exploreNight": state}, merge=True)
     activity.log("lead_found", f"Explored {area}, {city}: {stats['added']} new businesses with an email{detail}.")
 
+
+
+async def _report_failure(e: Exception) -> None:
+    """A failed night run used to vanish into the server log; now it's in the activity feed, and on
+    Telegram once a night (not every 30 minutes)."""
+    why = f"{type(e).__name__}: {str(e)[:200]}"
+    activity.log("error", f"Explorer run failed: {why}")
+    state = night()
+    if not state.get("failureSent"):
+        settings_ref().set({"exploreNight": {**state, "failureSent": True}}, merge=True)
+        try:
+            await telegram.send(f"⚠️ Night explorer failed: {why}\nIt tries again in 30 minutes; the area isn't lost.")
+        except Exception:
+            log.exception("Couldn't report the explorer failure")
 
 
 async def morning_summary() -> None:

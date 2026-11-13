@@ -28,12 +28,13 @@ async def _replies() -> dict:
 async def tick():
     """Cron, every 30 min in the day: start an automatic batch if it's sending time,
     otherwise just check replies. Also keeps the free Render instance awake."""
-    health.record_run("tick")         # so Settings can tell if the schedule stopped
+    prev = health.record_run("tick")  # so Settings can tell if the schedule stopped
+    gap = await health.gap_warning(prev)   # and Telegram hears about any runs that never came
     await explore.morning_summary()   # last night's explorer results, once
     chat.prune_history()              # chat history is kept for 24 hours
     status = outreach.auto_send()
     replies = {"newReplies": 0} if status == "started" else await _replies()   # a batch checks replies itself
-    return {"ok": True, "autoSend": status, **replies}
+    return {"ok": True, "autoSend": status, **replies, **({"gap": gap} if gap else {})}
 
 
 @router.post("/explore")
