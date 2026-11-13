@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..deps import require_user
-from ..services import categories, leads
+from ..services import categories, leads, scanlive
 
 router = APIRouter(tags=["campaigns"], dependencies=[Depends(require_user)])
 
@@ -18,6 +18,13 @@ class CampaignIn(BaseModel):
 class StatusIn(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=500)
     status: Literal["new", "ready", "not_interested"]
+
+
+@router.get("/campaigns/live")
+async def scans_live() -> dict:
+    """What the business search is doing right now (and the last few runs), from memory: the
+    "Scanning now" panel polls this every second or two while a search runs."""
+    return {"runs": scanlive.runs(3)}
 
 
 @router.post("/campaigns")

@@ -8,6 +8,7 @@ import { useUser } from "../lib/auth";
 import { slug, timeAgo } from "../lib/format";
 import { LoadMore, usePaged } from "../lib/paging";
 import Icon from "../components/Icon";
+import ScanLive, { useScanLive } from "../components/ScanLive";
 
 type Row = Campaign & { id: string };
 type SortKey = "area" | "total" | "withEmail" | "emailed" | "replied";
@@ -30,6 +31,7 @@ export default function Campaigns() {
   const [error, setError] = useState("");
 
   const listRef = useRef<HTMLDivElement>(null);
+  const live = useScanLive();
   const scans = usePaged<Campaign>(
     query(collection(db, userPath(user.uid, "campaigns")), orderBy("createdAt", "desc")),
     `campaigns:${user.uid}`,
@@ -48,6 +50,9 @@ export default function Campaigns() {
     try {
       await scanPlace(place.trim(), mode === "city" ? null : radius, category);
       setPlace("");
+      // the scan starts just after this reply: look twice so the live panel appears at once
+      window.setTimeout(live.kick, 700);
+      window.setTimeout(live.kick, 2500);
     } catch (e) {
       setError(errorText(e, "Couldn't start the scan. The server may be waking up; try again in a minute."));
     } finally {
@@ -66,6 +71,8 @@ export default function Campaigns() {
           </p>
         </div>
       </header>
+
+      <ScanLive runs={live.runs} />
 
       <form className="card campaign-form" onSubmit={onSubmit}>
         <div className="segmented" role="radiogroup" aria-label="Scan type">

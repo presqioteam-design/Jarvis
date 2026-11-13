@@ -52,6 +52,18 @@ export const voiceCommand = (command: string) => call<{ result: string; display?
 export const voiceShow = (topic: string, date?: string, symbol?: string) =>
   call<{ result: string; display: Display | null }>("/voice/show", { topic, date, symbol });
 export const sendChat = (message: string) => call<{ reply: string }>("/chat", { message });
+export type ScanEvent = { at: string; icon: string; text: string };
+export type ScanRun = {
+  id: string; kind: "scan" | "explorer"; place: string; city: string; what: string;
+  status: "running" | "done" | "failed"; step: "map" | "osm" | "websites" | "saving" | "done";
+  startedAt: string; updatedAt: string; finishedAt: string | null;
+  map: { kind: string; kindsDone: number; kindsTotal: number; square: number; searches: number; places: number };
+  osm: { places: number | null };
+  websites: { total: number; done: number; withEmail: number; startedAt: string | null };
+  saved: number; events: ScanEvent[]; result: string; error: string;
+};
+/** What the business search is doing right now (and the last few runs), live from the server's memory. */
+export const scansLive = () => call<{ runs: ScanRun[] }>("/campaigns/live");
 export const blockLead = (leadId: string) => call<{ ok: true }>(`/leads/${leadId}/block`, {});
 export const scanPlace = (place: string, radiusKm: number | null, category: string) =>
   call<{ id: string }>("/campaigns", { place, radiusKm, category });

@@ -21,7 +21,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 from ..firebase import col, db
 from ..timeutil import now_utc
-from . import activity, categories, crawler, keepalive, prefs, sources, telegram, usage
+from . import activity, categories, crawler, keepalive, prefs, scanlive, sources, telegram, usage
 
 log = logging.getLogger(__name__)
 SAME_PLACE_M = 200      # two results this close with similar names are one hotel
@@ -122,6 +122,7 @@ async def _run_campaign(campaign_id: str) -> None:
     named = camp.get("category") not in (None, categories.ALL)
     cats = categories.resolve(camp.get("category")) if named else prefs.enabled_categories()
     what = categories.label_of(camp.get("category"))
+    live = scanlive.start("scan", camp.get("name") or camp["area"]["label"], camp.get("city") or "", what)
     try:
         city = camp.get("city")
         if not city:
@@ -131,6 +132,7 @@ async def _run_campaign(campaign_id: str) -> None:
             city = place["city"]
             camp["scan"]["queue"] = grid(box, START_SQUARE_KM)
             camp["box"], camp["name"] = box, place["label"]
+            live.data.update(place=place["label"], city=city)
             ref.update({
                 "city": city, "box": box, "name": place["label"],
                 "area": {"label": place["label"], "lat": place["lat"], "lon": place["lon"], "radiusM": radius},
@@ -143,7 +145,10 @@ async def _run_campaign(campaign_id: str) -> None:
             scan["phase"] = "osm"
             ref.update({"scan.phase": "osm"})
         if scan["phase"] == "osm":
-            await add_osm(await sources.osm_places(camp["box"], cats), campaign_id, city, camp["box"])
+            live.osm()
+            osm = await sources.osm_places(camp["box"], cats)
+            live.osm(len(osm))
+            await add_osm(osm, campaign_id, city, camp["box"])
             ref.update({"scan.phase": "websites"})
 
         if camp.get("kind") == "area":
@@ -169,16 +174,20 @@ async def _run_campaign(campaign_id: str) -> None:
             f"The area now has {totals['withEmail']} businesses to email across {totals['areas']} areas."
         )
         activity.log("lead_found", text)
+        live.finish(f"{new} new businesses with an email saved. {camp['name']} now has {totals['withEmail']} to email.")
         await telegram.send(f"🔎 {text}")
     except ScanPaused:
+        live.fail(TOMTOM_STOPPED)
         ref.update({"status": "failed", "error": TOMTOM_STOPPED})
         await telegram.send(f"⏸ Scan of {camp['name']}: {TOMTOM_STOPPED}")
     except ResourceExhausted:
+        live.fail(QUOTA_STOPPED)
         ref.update({"status": "failed", "error": QUOTA_STOPPED})
         await telegram.send(f"⏸ Scan of {camp['name']} paused: {QUOTA_STOPPED}")
     except Exception as e:
         log.exception("Campaign %s failed", campaign_id)
         msg = str(e) if isinstance(e, ValueError) else "Search stopped. Start it again to resume."
+        live.fail(msg)
         ref.update({"status": "failed", "error": msg})
         activity.log("error", f"Scan of {camp['area']['label']} stopped: {msg}")
 
@@ -230,9 +239,12 @@ async def scan_squares(ref, scan: dict, campaign_id: str, city: str, cats: list[
             # a smaller square only repeats the categories that filled its parent (usually restaurants)
             todo = [c for c in cats if not box.get("only") or c.key in box["only"]]
             found, full_keys = [], []
+            live = scanlive.get()
             try:
-                for cat in todo:
+                for i, cat in enumerate(todo):
                     places, full = await sources.tomtom_box(client, box, cat)
+                    if live:
+                        live.map_search(cat.label, i, len(todo), scan["squaresDone"] + 1, len(places))
                     searches += len(cat.tomtom)
                     found += places
                     if full:
@@ -259,7 +271,15 @@ async def save_reachable(found: list[dict], campaign_id: str, city: str, fallbac
     saved, and addresses on the do-not-contact list, are skipped."""
     places = {h["id"]: h for h in found if h["name"] and (h["emails"] or h["website"])}
     sites = list({h["website"] for h in places.values() if not h["emails"] and not crawler.is_aggregator(h["website"])})
-    crawled = await crawler.crawl_many(sites) if sites else {}
+    live = scanlive.get()
+    on_site = None
+    if live:
+        live.websites(len(sites))
+        owner = {h["website"]: h for h in places.values() if h["website"]}
+        def on_site(site: str, result: dict) -> None:
+            h = owner.get(site, {"name": site, "category": ""})
+            live.site(h["name"], categories.get(h.get("category")).label, [e for e in result.get("emails", []) if crawler.usable(e)])
+    crawled = await crawler.crawl_many(sites, on_done=on_site) if sites else {}
     reachable = []
     for h in places.values():
         info = crawled.get(h["website"], {})
@@ -267,7 +287,11 @@ async def save_reachable(found: list[dict], campaign_id: str, city: str, fallbac
         if emails:
             reachable.append(h | {"emails": emails, "phone": h["phone"] or info.get("phone", "")})
     if not reachable:
+        if live:
+            live.saved([])
         return []
+    if live:
+        live.saving()
 
     refs = [col("leads").document(h["id"]) for h in reachable]
     known = {snap.id for i in range(0, len(refs), 300) for snap in db().get_all(refs[i:i + 300]) if snap.exists}
@@ -298,6 +322,8 @@ async def save_reachable(found: list[dict], campaign_id: str, city: str, fallbac
             batch.commit()
             batch = db().batch()
     batch.commit()
+    if live:
+        live.saved(rows)
     return rows
 
 

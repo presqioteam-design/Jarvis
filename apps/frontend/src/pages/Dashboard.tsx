@@ -7,6 +7,7 @@ import { useUser } from "../lib/auth";
 import { greeting, percent, timeAgo } from "../lib/format";
 import { LoadMore, usePaged } from "../lib/paging";
 import Icon, { type IconName } from "../components/Icon";
+import ScanLive, { useScanLive } from "../components/ScanLive";
 
 const STAGES: { key: string; label: string; statuses: LeadStatus[]; color: string }[] = [
   { key: "found", label: "Found", statuses: ["new", "ready", "no_contact"], color: "var(--c-found)" },
@@ -33,6 +34,7 @@ const STATUS_LABEL: Partial<Record<LeadStatus, string>> = {
 
 export default function Dashboard() {
   const user = useUser()!;
+  const scan = useScanLive();
   const [cities, setCities] = useState<CitySummary[]>([]);
   // both panels scroll inside themselves and load the next page at the bottom
   const attentionRef = useRef<HTMLUListElement>(null);
@@ -114,6 +116,8 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      <ScanLive runs={scan.runs} compact />
 
       <section className="kpis" aria-label="Pipeline totals">
         <Kpi icon="leads" label="Businesses found" value={total} note={total ? `${counts.found.toLocaleString()} not contacted yet` : "Scan your city"} />

@@ -26,7 +26,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from ..config import get_settings
 from ..firebase import col, db
 from ..timeutil import now_local, now_utc
-from . import activity, categories, keepalive, leads, prefs, sources, telegram, usage
+from . import activity, categories, keepalive, leads, prefs, scanlive, sources, telegram, usage
 
 log = logging.getLogger(__name__)
 OVERPASS = ["https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass-api.de/api/interpreter",
@@ -207,7 +207,8 @@ async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
     box = leads.square_around(area["lat"], area["lon"], AREA_RADIUS_M)
     found, squares, searched, failed = {}, 0, [], []
     async with httpx.AsyncClient(timeout=30) as client:
-        for key in cats:
+        live = scanlive.get()
+        for n, key in enumerate(cats):
             cat = categories.get(key)
             queue, used = leads.grid(box, leads.START_SQUARE_KM), 0
             try:
@@ -215,6 +216,8 @@ async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
                     square = queue.pop(0)
                     places, full = await sources.tomtom_box(client, square, cat)
                     used += 1
+                    if live:
+                        live.map_search(cat.label, n, len(cats), used, len(places))
                     if full and leads.width_km(square) > leads.MIN_SQUARE_KM:
                         queue.extend(leads.grid(square, leads.width_km(square) / 2))
                     for h in places:
@@ -227,10 +230,17 @@ async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
                 failed.append(f"{cat.label}: {type(e).__name__}")   # one kind failing doesn't lose the area
                 log.warning("Explorer: %s in %s failed: %s", key, area["name"], e)
             squares += used
+            if live:
+                live.kinds_done(n + 1, len(cats))
     if not searched:
         raise RuntimeError("TomTom searches all failed: " + "; ".join(failed))
     # OpenStreetMap lists many more websites and emails than TomTom for most categories
-    for h in await sources.osm_places(box, [categories.get(k) for k in cats]):
+    if live:
+        live.osm()
+    osm = await sources.osm_places(box, [categories.get(k) for k in cats])
+    if live:
+        live.osm(len(osm))
+    for h in osm:
         found.setdefault(h["id"], h)
 
     usage.save_map_searches()
@@ -341,16 +351,22 @@ async def _run_one() -> None:
                 idx = 0
             area = city["areas"][idx]
             cats = pending_cats(area, wanted)
+            live = scanlive.start("explorer", f"{area['name']}, {city['city']}", city["city"],
+                                  ", ".join(categories.get(k).label.lower() for k in cats))
             stats = await explore_area(city["city"], area, cats)
             done_cats = sorted(set(area.get("cats") or (["hotels"] if area.get("status") == "done" else [])) | set(stats["searched"]))
             city["areas"][idx] |= {"status": "done", "cats": done_cats, "doneAt": now_utc().isoformat(),
                                    **{k: v for k, v in stats.items() if k not in ("byCategory", "searched", "failed")}}
             ref.update({"areas": city["areas"]})
             record(city["city"], area["name"], stats)
+            live.finish(f"{stats['added']} new businesses with an email saved from {stats['found']:,} places"
+                        + (f"; skipped {len(stats['failed'])} kinds (tried again next time)" if stats["failed"] else ""))
             if stats["failed"]:
                 activity.log("error", f"Explorer, {area['name']} ({city['city']}): skipped " + "; ".join(stats["failed"]) + " (tried again next time)")
         except Exception as e:
             log.exception("Explorer run failed")
+            if (run := scanlive.get()) and run.data["status"] == "running":
+                run.fail(f"{type(e).__name__}: {str(e)[:200]}")
             await _report_failure(e)
 
 

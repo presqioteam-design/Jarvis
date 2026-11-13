@@ -97,10 +97,14 @@ async def crawl(client: httpx.AsyncClient, website: str) -> dict:
     return {"emails": emails[:3], "phone": phone}
 
 
-async def crawl_many(websites: list[str], concurrency: int = 10) -> dict[str, dict]:
+async def crawl_many(websites: list[str], concurrency: int = 10, on_done=None) -> dict[str, dict]:
+    """`on_done(site, result)` is called as each website finishes (for the live progress)."""
     sem = asyncio.Semaphore(concurrency)
     async with httpx.AsyncClient(timeout=12, follow_redirects=True, headers=HEADERS) as client:
         async def one(site: str):
             async with sem:
-                return site, await crawl(client, site)
+                result = await crawl(client, site)
+                if on_done:
+                    on_done(site, result)
+                return site, result
         return dict(await asyncio.gather(*(one(s) for s in websites)))

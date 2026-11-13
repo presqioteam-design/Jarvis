@@ -256,6 +256,20 @@ export class VoiceCall {
     this.timers.push(check);
   }
 
+  private notes: string[] = [];
+
+  /** Something happened outside the call (a scan finished): Jarvis tells the admin at his next pause,
+   *  never over himself or the admin. */
+  notify(text: string) {
+    this.notes.push(text);
+    this.sayNotes();
+  }
+
+  private sayNotes() {
+    if (this.state !== "listening" || !this.notes.length) return;
+    this.say(`[Update from Jarvis's own systems, not said by the admin. Tell the admin now, in one or two short spoken sentences: ${this.notes.splice(0).join(" ")}]`);
+  }
+
   /** A text nudge to Jarvis (not shown or spoken as yours). */
   private say(text: string) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ realtimeInput: { text } }));
@@ -321,5 +335,6 @@ export class VoiceCall {
     if (this.state === s) return;
     this.state = s;
     this.on.state(s);
+    if (s === "listening") this.sayNotes();   // a pause: say anything that came in meanwhile
   }
 }

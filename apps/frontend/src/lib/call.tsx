@@ -3,6 +3,7 @@
  * Home, Leads, Chat and back. It ends only when you hang up or tell Jarvis to.
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { scansLive } from "./api";
 import { VoiceCall, type CallState, type Task } from "./voice";
 
 type Allowance = { callsLeft: number | null; callsPerDay: number; maxSeconds: number };
@@ -77,6 +78,27 @@ export function CallProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("visibilitychange", take);
       void lock?.release().catch(() => undefined);
     };
+  }, [live]);
+
+  // a scan that finishes during the call: Jarvis says so (the server's live search state, read from
+  // memory every 5 s while the call is on; no database or map requests)
+  const announced = useRef(new Set<string>());
+  useEffect(() => {
+    if (!live) return;
+    const startedAt = Date.now();
+    const t = setInterval(() => {
+      scansLive().then(({ runs }) => {
+        for (const r of runs) {
+          if (r.kind !== "scan" || r.status === "running" || announced.current.has(r.id)) continue;
+          if (!r.finishedAt || Date.parse(r.finishedAt) < startedAt) { announced.current.add(r.id); continue; }   // finished before the call
+          announced.current.add(r.id);
+          call.current?.notify(r.status === "done"
+            ? `The scan of ${r.place} has finished: ${r.result}`
+            : `The scan of ${r.place} stopped: ${r.error}`);
+        }
+      }).catch(() => undefined);
+    }, 5000);
+    return () => clearInterval(t);
   }, [live]);
 
   // signing out (or closing the app shell) ends the call

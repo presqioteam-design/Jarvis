@@ -16,7 +16,7 @@ from google.api_core.exceptions import ResourceExhausted
 from ..config import get_settings
 from ..firebase import col, db
 from ..timeutil import now_local, now_utc
-from . import activity, categories, explore, gmail, inbox, leads, llm, outreach, prefs, presqio, report, telegram, usage, voice
+from . import activity, categories, explore, gmail, inbox, leads, llm, outreach, prefs, presqio, report, scanlive, telegram, usage, voice
 
 log = logging.getLogger(__name__)
 _tasks: set[asyncio.Task] = set()   # keep background scans alive
@@ -46,6 +46,7 @@ or, when the admin clearly asks you to do something, one of these actions:
 {{"reply": "...", "action": {{"name": "approve", "numbers": [<numbers from the last list>]}}}}
 {{"reply": "...", "action": {{"name": "approve_all", "area": "<locality or null for the whole city>"}}}}
 {{"reply": "...", "action": {{"name": "block", "numbers": [<numbers from the last list>]}}}}
+{{"reply": "...", "action": {{"name": "scan_status"}}}}   (what the business search is doing right now: step, place, finds)
 {{"reply": "...", "action": {{"name": "lab_status"}}}}   (the Trading Lab's totals)
 {{"reply": "...", "action": {{"name": "lab_day", "date": "<YYYY-MM-DD or null for the latest>", "symbol": "<stock or null>"}}}}   (a lab day's trades, times and reasons)
 {{"reply": "...", "action": {{"name": "lab_check"}}}}   (replay sessions that finished since the last run)
@@ -118,7 +119,7 @@ def context_block() -> str:
         f"SCANS:\n{camp_lines}\n\n"
         f"LAST 48 HOURS:\n{recent_lines}\n\n"
         f"LAST LIST SHOWN: " + (", ".join(f"{i}. {r['name']}" for i, r in enumerate(_last_list, 1)) or "none") + "\n\n"
-        + _lab_briefing()
+        + _lab_briefing() + "\n\n" + scanlive.text()
     )
 
 
@@ -208,6 +209,7 @@ HELP = """Here's what you can tell me:
 • scan Gachibowli 2km — search around a spot
 • scan Vijayawada — a whole city
 • scan hospitals in Madhapur 3km — just one kind
+• scan status — what the search is doing right now (also: "what are you scanning?")
 Kinds: hotels, hospitals, schools, restaurants, factories, retail, IT, offices, security, gyms, coaching
 
 ❓ Questions, e.g.
@@ -255,6 +257,8 @@ COMMANDS = [
      lambda m: {"name": "send_emails", "count": int(m[1]), "area": m[2]}),
     (re.compile(r"^send\s+follow[\s-]?ups?[.!]*$", re.I), lambda m: {"name": "send_follow_ups"}),
     (re.compile(r"^check\s+(?:the\s+)?(?:replies|inbox|mails?|emails?)[.!?]*$", re.I), lambda m: {"name": "check_replies"}),
+    (re.compile(r"^(?:scan(?:ning)?\s+status|what(?:'s| is| are)?\s+(?:you\s+)?scanning(?:\s+now)?|how(?:'s| is)\s+the\s+scan(?:\s+going)?)[.!?]*$", re.I),
+     lambda m: {"name": "scan_status"}),
     (re.compile(r"^(?:trading\s+)?lab(?:\s+status)?[.!?]*$|^trading(?:\s+lab)?(?:\s+status)?[.!?]*$"
                 r"|^(?:show\s+(?:me\s+)?)?(?:the\s+)?trading\s+lab(?:\s+(?:status|overview|summary|results?))?[.!?]*$"
                 r"|^how(?:'s|\s+is)\s+(?:the\s+)?(?:trading(?:\s+lab)?|lab)(?:\s+(?:doing|going))?\??$", re.I), lambda m: {"name": "lab_status"}),
@@ -331,6 +335,8 @@ def run_action(action: dict) -> tuple[bool, str]:
         return outreach.start(outreach.send_follow_ups()), ""
     if name == "help":
         return False, HELP
+    if name == "scan_status":
+        return False, scanlive.text().replace("SCANNING NOW", "🔎 Scanning now").replace("LAST SEARCH", "Last search")
     if name == "lab_status":
         from tradinglab.jarvis_api import status_text
         return False, status_text()
