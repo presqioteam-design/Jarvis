@@ -28,7 +28,7 @@ FIRST = """Hello {hotel} team,
 
 We're writing from Presqio, a staff attendance and payroll tool that suits {fit} in {area}.
 
-Your staff check in from the phone they already carry. Each check-in takes a selfie and a GPS reading at your {place}, so nobody can mark attendance for a colleague or check in from home. {shifts} Attendance flows straight into monthly payroll and payslips. There's no machine to buy and no app to install.
+Your staff check in from the phone they already carry. Each check-in takes a selfie and a GPS reading at your {place}, so nobody can mark attendance for a colleague or check in from home. {shifts} Attendance flows straight into monthly payroll and payslips. There's no machine to buy and no app to install, and staff without a smartphone can use one shared tablet at the entrance.
 
 If you run more than one {branch}, you can see all of them on one dashboard.
 
@@ -66,12 +66,25 @@ Thank you for your time.
 
 SEQUENCE = [FIRST, FOLLOW_UP_1, FOLLOW_UP_2]
 
+# Presqio's kind of business for each category: the sign-up link carries it, so the trial starts
+# with shifts and leave types that suit them.
+PRESQIO_TYPE = {
+    "hotels": "restaurant", "hospitals": "clinic", "schools": "school", "restaurants": "restaurant",
+    "factories": "factory", "retail": "retail", "it": "office", "offices": "office",
+    "security": "security", "gyms": "salon", "coaching": "school",
+}
+
+
+def signup_link(category: str | None) -> str:
+    kind = PRESQIO_TYPE.get(categories.get(category).key)
+    return f"{SIGNUP_URL}?type={kind}" if kind else SIGNUP_URL
+
 
 def render(step: int, hotel: str, area: str, sender: str = "Presqio Team", category: str | None = None,
            phone: str = PHONE, website: str = WEBSITE) -> Email:
     """step 0 = first email; 1 and 2 are follow-ups sent as replies in the same thread."""
     cat = categories.get(category)
-    fields = {"hotel": hotel.strip(), "area": area.strip() or "your area", "signup": SIGNUP_URL, "phone": phone,
+    fields = {"hotel": hotel.strip(), "area": area.strip() or "your area", "signup": signup_link(category), "phone": phone,
               "fit": cat.fit, "place": cat.place, "shifts": cat.shifts, "branch": cat.branch}
     sender = sender if "presqio" in sender.lower() else f"{sender}\nPresqio"
     signature = SIGNATURE.format(sender=sender, phone=phone, website=website)
