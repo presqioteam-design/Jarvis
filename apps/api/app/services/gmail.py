@@ -99,3 +99,28 @@ async def recent_raw(days: int) -> list[bytes]:
             _check_read(r)
             out.append(base64.urlsafe_b64decode(r.json()["raw"]))
     return out
+
+
+async def thread_messages(days: int, wanted) -> list[tuple[str, str, bytes]]:
+    """(Gmail id, thread id, raw bytes) of inbox messages from the last `days` days for which
+    wanted(gmail_id, thread_id) is true. Only those are downloaded: the list call gives ids and
+    thread ids for free."""
+    out: list[tuple[str, str, bytes]] = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        picked, page, listed = [], None, 0
+        while True:
+            r = await client.get(f"{API}/messages", headers=await _headers(client),
+                                 params={"q": f"in:inbox newer_than:{days}d", "maxResults": 500, **({"pageToken": page} if page else {})})
+            _check_read(r)
+            data = r.json()
+            batch = data.get("messages", [])
+            listed += len(batch)
+            picked += [(m["id"], m["threadId"]) for m in batch if wanted(m["id"], m["threadId"])]
+            page = data.get("nextPageToken")
+            if not page or listed >= 5000:
+                break
+        for mid, tid in picked:
+            r = await client.get(f"{API}/messages/{mid}", headers=await _headers(client), params={"format": "raw"})
+            _check_read(r)
+            out.append((mid, tid, base64.urlsafe_b64decode(r.json()["raw"])))
+    return out

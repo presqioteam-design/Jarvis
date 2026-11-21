@@ -7,26 +7,13 @@ import {
   type SendingSettings, type SendingView,
 } from "../lib/api";
 import { categoryLabel } from "@jarvis/shared";
-import { timeAgo } from "../lib/format";
+import { ampm, halfHours, timeAgo } from "../lib/format";
 import { logOut, useUser } from "../lib/auth";
 import Icon, { type IconName } from "../components/Icon";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /** "09:30", "10:00", … between the cron's first and last run (it fires on :00 and :30). */
-function halfHours(from: string, to: string): string[] {
-  const out: string[] = [];
-  const [h0, m0] = from.split(":").map(Number);
-  const [h1, m1] = to.split(":").map(Number);
-  for (let t = h0 * 60 + m0; t <= h1 * 60 + m1; t += 30) out.push(`${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`);
-  return out;
-}
-
-const ampm = (t: string) => {
-  const [h, m] = t.split(":").map(Number);
-  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
-};
-
 function runsPerDay(from: string, until: string): number {
   const min = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
   const first = Math.ceil(min(from) / 30) * 30;

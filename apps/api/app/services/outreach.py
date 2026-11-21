@@ -62,14 +62,16 @@ def sent_today() -> int:
     start_of_day = datetime.combine(now_local().date(), time.min, tzinfo=get_settings().tz).isoformat()
     # one filter only, so Firestore needs no composite index
     q = col("messages").where(filter=FieldFilter("at", ">=", start_of_day)).select(["direction"])
-    return sum(1 for m in q.stream() if m.to_dict().get("direction") == "out")
+    from . import portfolio_outreach   # the portfolio emails go out from this mailbox too: one account, one limit
+    return sum(1 for m in q.stream() if m.to_dict().get("direction") == "out") + portfolio_outreach.sent_today()
 
 
 def pick_first_emails(count: int, area: str | None) -> list[dict]:
     """Approved leads first, then unreviewed ones with an email. Never the same address twice."""
     contacted = {d.to_dict()["emailedTo"] for d in col("leads").where(filter=FieldFilter("emailedTo", ">", "")).select(["emailedTo"]).stream()}
     blocked = {d.id for d in col("dnc").stream()}
-    picked, seen = [], set(contacted)
+    from . import portfolio_outreach   # a business the portfolio emails just reached waits PITCH_GAP_DAYS for Presqio
+    picked, seen = [], set(contacted) | portfolio_outreach.recently_pitched()
     area = area.split(",")[0].strip().lower() if area else None   # "Madhapur, Hyderabad" -> "madhapur"
     for status in ("ready", "new"):
         # two equality filters: no composite index needed, and only leads with an email are read

@@ -156,30 +156,51 @@ export const saveChatHours = (hours: number) => call<{ chatHours: number }>("/se
 
 // ── Portfolio: businesses that need a website ───────────────────────────────
 export type SiteGroup = "none" | "social" | "listing" | "dead" | "weak";
+export type ProspectStatus = "new" | "ready" | "emailed" | "replied" | "interested" | "not_interested" | "unsubscribed" | "bounced";
+export type PortfolioTab = "review" | "approved" | "contacted" | "closed";
 export type PortfolioCity = {
   city: string;
   total: number;
-  site: Partial<Record<SiteGroup, { email?: number; call?: number }>>;
-  category: Record<string, number>;
+  n: Partial<Record<ProspectStatus, Partial<Record<SiteGroup, { email?: number; call?: number }>>>>;   // per status, group, reach
+  c: Partial<Record<ProspectStatus, Record<string, number>>>;                                         // per status, kind of business
 };
 export type PortfolioCheck = { running: boolean; checked: number; added: number; finished: boolean; finishedAt: string | null; error: string };
+export type PortfolioSending = {
+  enabled: boolean; perRun: number; dailyCap: number; from: string; until: string; days: number[];
+  followUps: boolean; followUpDays: [number, number];
+};
+export type PortfolioMe = { senderName: string; phone: string; email: string; website: string };
 export type PortfolioView = {
   collect: boolean;
   check: PortfolioCheck;
   cities: PortfolioCity[];
   groups: { key: SiteGroup; label: string }[];
   categories: { key: string; label: string }[];
+  mailbox: { address: string; connected: boolean; sharedCap: number; sharedSentToday: number };   // shared with Presqio
+  sending: PortfolioSending;
+  me: PortfolioMe;
+  sentToday: number;
+  busy: boolean;
+  limits: { earliest: string; latest: string; maxPerRun: number; maxDaily: number };
 };
 export type Prospect = {
   id: string; name: string; category: string; categoryLabel: string; city: string; area: string; address: string;
   phone: string; emails: string[]; website: string; site: SiteGroup; siteLabel: string; issues: string[];
-  reach: "email" | "call"; status: string;
+  reach: "email" | "call"; status: ProspectStatus; emailedTo: string; followUps: number; lastContactAt: string | null; replySummary: string;
 };
+export type ProspectEmail = { label: string; to: string; subject: string; body: string };
 export const getPortfolio = () => call<PortfolioView>("/portfolio");
 export const setPortfolioCollect = (collect: boolean) => call<PortfolioView>("/portfolio/collect", { collect });
 export const startPortfolioCheck = (restart = false) => call<PortfolioView>("/portfolio/check", { restart });
-export const listProspects = (f: { city: string; site?: string; reach?: string; category?: string; after?: string }) =>
+export const listProspects = (f: { city: string; tab: PortfolioTab; site?: string; reach?: string; category?: string; after?: string }) =>
   call<{ items: Prospect[]; next: string | null }>(
     `/portfolio/prospects?${new URLSearchParams(Object.entries(f).filter(([, v]) => v) as [string, string][])}`);
+export const reviewProspects = (ids: string[], approved: boolean) => call<{ changed: number }>("/portfolio/review", { ids, approved });
+export const approveAllProspects = (city: string, site: string | null, category: string | null) =>
+  call<{ approved: number }>("/portfolio/approve-all", { city, site, category });
+export const savePortfolioSending = (patch: Partial<PortfolioSending>) => call<PortfolioView>("/portfolio/sending", patch);
+export const savePortfolioMe = (patch: Partial<PortfolioMe>) => call<PortfolioView>("/portfolio/me", patch);
+export const portfolioSendNow = (count: number) => call<{ note: string }>("/portfolio/send-now", { count });
+export const previewProspect = (id: string) => call<{ emails: ProspectEmail[] }>(`/portfolio/${encodeURIComponent(id)}/preview`);
 export const skipProspect = (id: string) => call<{ ok: true }>(`/portfolio/${encodeURIComponent(id)}/skip`, {});
 export const blockProspect = (id: string) => call<{ ok: true }>(`/portfolio/${encodeURIComponent(id)}/block`, {});

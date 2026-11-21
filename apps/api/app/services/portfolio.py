@@ -121,7 +121,8 @@ def _collect(found: list[dict], crawled: dict[str, dict], city: str, fallback_ar
         r |= {"reach": "email" if r["emails"] else "call", "status": "new", "createdAt": now, "updatedAt": now}
         batch.set(refs[k], r)
         added += 1
-        counts[(r["city"], r["site"], r["reach"], r["category"])] = counts.get((r["city"], r["site"], r["reach"], r["category"]), 0) + 1
+        c = _count_key(r, "new")
+        counts[c] = counts.get(c, 0) + 1
         if added % 400 == 0:
             batch.commit()
             batch = db().batch()
@@ -130,18 +131,34 @@ def _collect(found: list[dict], crawled: dict[str, dict], city: str, fallback_ar
     return added
 
 
+# ── statuses and counts ─────────────────────────────────────────────────────
+# new (to review) -> ready (approved to email) -> emailed -> replied / interested / not_interested /
+# unsubscribed / bounced. skipped and blocked leave the lists. Only approved ones are ever emailed.
+TABS = {
+    "review": ["new"],
+    "approved": ["ready"],
+    "contacted": ["emailed", "replied", "interested"],
+    "closed": ["not_interested", "unsubscribed", "bounced"],
+}
+OFF_LIST = ("skipped", "blocked")
+
+
+def _count_key(p: dict, status: str) -> tuple:
+    return (p["city"], status, p["site"], p["reach"], p["category"])
+
+
 def _add_counts(counts: dict[tuple, int], sign: int = 1) -> None:
-    """counts: (city, site, reach, category) -> n. One write per city."""
+    """counts: (city, status, site, reach, category) -> n. One write per city.
+    The city doc keeps n.{status}.{site}.{reach} and c.{status}.{category}."""
     per_city: dict[str, dict] = {}
-    for (city, site, reach, cat), n in counts.items():
-        u = per_city.setdefault(city, {"city": city})
-        for field in ("total", f"site.{site}.{reach}", f"category.{cat}"):
+    for (city, status, site, reach, cat), n in counts.items():
+        if status in OFF_LIST:
+            continue
+        u = per_city.setdefault(city, {})
+        for field in (f"n.{status}.{site}.{reach}", f"c.{status}.{cat}"):
             u[field] = u.get(field, 0) + sign * n
     for city, u in per_city.items():
-        data = {"city": city, "updatedAt": now_utc().isoformat()}
-        for field, n in u.items():
-            if field != "city":
-                data[field] = firestore.Increment(n)
+        data = {"city": city, "updatedAt": now_utc().isoformat(), **{f: firestore.Increment(n) for f, n in u.items() if n}}
         # update() reads dotted names as nested fields; create the doc first if it's new
         ref = summary_ref(city)
         try:
@@ -151,14 +168,30 @@ def _add_counts(counts: dict[tuple, int], sign: int = 1) -> None:
             ref.update(data)
 
 
+def move(pid: str, p: dict, status: str, patch: dict | None = None) -> None:
+    """Change a prospect's status and keep the city's counts right."""
+    old = p.get("status", "new")
+    col("prospects").document(pid).update({"status": status, "updatedAt": now_utc().isoformat(), **(patch or {})})
+    if old != status:
+        _add_counts({_count_key(p, old): -1, _count_key(p, status): 1})
+    p["status"] = status
+
+
 # ── the page ────────────────────────────────────────────────────────────────
 
 def cities() -> list[dict]:
     out = []
     for d in col("portfolio").stream():
         x = d.to_dict()
-        if x.get("city") and x.get("total", 0) > 0:
-            out.append({"city": x["city"], "total": x.get("total", 0), "site": x.get("site", {}), "category": x.get("category", {})})
+        if "site" in x and "n" not in x:
+            # saved before statuses were counted: those were all "to review"
+            x["n"], x["c"] = {"new": x["site"]}, {"new": x.get("category", {})}
+            d.reference.update({"n": x["n"], "c": x["c"], "site": firestore.DELETE_FIELD,
+                                "category": firestore.DELETE_FIELD, "total": firestore.DELETE_FIELD})
+        n = x.get("n", {})
+        total = sum(v for by_site in n.values() for by_reach in by_site.values() for v in by_reach.values())
+        if x.get("city") and total > 0:
+            out.append({"city": x["city"], "total": total, "n": n, "c": x.get("c", {})})
     return sorted(out, key=lambda c: (-c["total"], c["city"]))
 
 
@@ -169,36 +202,83 @@ def view(p: dict, pid: str) -> dict:
         "address": p.get("address", ""), "phone": p.get("phone", ""), "emails": p.get("emails", []),
         "website": p.get("website", ""), "site": p.get("site", ""), "siteLabel": site_check.GROUP_LABELS.get(p.get("site", ""), ""),
         "issues": [site_check.issue_text(i) for i in p.get("issues", [])], "reach": p.get("reach", ""),
-        "status": p.get("status", "new"),
+        "status": p.get("status", "new"), "emailedTo": p.get("emailedTo", ""), "followUps": p.get("followUps", 0),
+        "lastContactAt": p.get("lastContactAt"), "replySummary": p.get("replySummary", ""),
     }
 
 
-def list_prospects(city: str, site: str | None, reach: str | None, category: str | None, after: str | None) -> dict:
-    """One page, equality filters only (no composite index needed), in document order."""
-    q = col("prospects").where(filter=FieldFilter("city", "==", city)).where(filter=FieldFilter("status", "==", "new"))
-    if site:
-        q = q.where(filter=FieldFilter("site", "==", site))
-    if reach:
-        q = q.where(filter=FieldFilter("reach", "==", reach))
-    if category:
-        q = q.where(filter=FieldFilter("category", "==", category))
-    q = q.order_by("__name__")
+def _query(city: str, status: str, site: str | None, reach: str | None, category: str | None):
+    """Equality filters only: Firestore serves these without a composite index."""
+    q = col("prospects").where(filter=FieldFilter("city", "==", city)).where(filter=FieldFilter("status", "==", status))
+    for field, value in (("site", site), ("reach", reach), ("category", category)):
+        if value:
+            q = q.where(filter=FieldFilter(field, "==", value))
+    return q
+
+
+def list_prospects(city: str, tab: str, site: str | None, reach: str | None, category: str | None, after: str | None) -> dict:
+    """One page of a tab. A tab with several statuses is read one status after another, like the
+    Leads page; `after` is "<status index>:<last id>"."""
+    statuses = TABS[tab]
+    phase, last_id = 0, None
     if after:
-        last = col("prospects").document(after).get()
-        if last.exists:
-            q = q.start_after(last)
-    docs = list(q.limit(PAGE).stream())
-    return {"items": [view(d.to_dict(), d.id) for d in docs], "next": docs[-1].id if len(docs) == PAGE else None}
+        idx, _, last_id = after.partition(":")
+        phase = int(idx) if idx.isdigit() else 0
+    items = []
+    while phase < len(statuses) and len(items) < PAGE:
+        q = _query(city, statuses[phase], site, reach, category).order_by("__name__")
+        if last_id:
+            last = col("prospects").document(last_id).get()
+            if last.exists:
+                q = q.start_after(last)
+        want = PAGE - len(items)
+        docs = list(q.limit(want).stream())
+        items += [view(d.to_dict(), d.id) for d in docs]
+        if len(docs) == want:
+            return {"items": items, "next": f"{phase}:{docs[-1].id}"}
+        phase, last_id = phase + 1, None
+    return {"items": items, "next": None}
+
+
+def _get(pid: str) -> dict:
+    p = col("prospects").document(pid).get().to_dict()
+    if not p:
+        raise ValueError("That business isn't in the list any more.")
+    return p
+
+
+def set_review(ids: list[str], approved: bool) -> int:
+    """Approve businesses to be emailed (or take the approval back). Only ones with an email that
+    haven't been contacted yet change. Returns how many changed."""
+    changed = 0
+    for pid in ids:
+        p = col("prospects").document(pid).get().to_dict()
+        if p and p.get("reach") == "email" and p.get("status") == ("new" if approved else "ready"):
+            move(pid, p, "ready" if approved else "new")
+            changed += 1
+    return changed
+
+
+def approve_all(city: str, site: str | None, category: str | None) -> int:
+    """Approve every business with an email in this city (and group / kind) that's waiting for review."""
+    docs = list(_query(city, "new", site, "email", category).stream())
+    now, counts, batch = now_utc().isoformat(), {}, db().batch()
+    for i, d in enumerate(docs, 1):
+        p = d.to_dict()
+        batch.update(d.reference, {"status": "ready", "updatedAt": now})
+        for k, n in ((_count_key(p, "new"), -1), (_count_key(p, "ready"), 1)):
+            counts[k] = counts.get(k, 0) + n
+        if i % 400 == 0:
+            batch.commit()
+            batch = db().batch()
+    batch.commit()
+    _add_counts(counts)
+    return len(docs)
 
 
 def _remove(pid: str, status: str) -> dict:
-    ref = col("prospects").document(pid)
-    p = ref.get().to_dict()
-    if not p:
-        raise ValueError("That business isn't in the list any more.")
-    if p.get("status") == "new":
-        _add_counts({(p["city"], p["site"], p["reach"], p["category"]): 1}, sign=-1)
-    ref.update({"status": status, "updatedAt": now_utc().isoformat()})
+    p = _get(pid)
+    move(pid, p, status, {"nextActionAt": None})
     return p
 
 

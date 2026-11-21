@@ -30,3 +30,18 @@ export function slug(text: string): string {
 }
 
 export const areaKey = (city: string, area: string) => `${slug(city)}--${slug(area)}`;
+
+/** "09:30".."20:00" every half hour, both ends included. */
+export function halfHours(from: string, to: string): string[] {
+  const out: string[] = [];
+  const [h0, m0] = from.split(":").map(Number);
+  const [h1, m1] = to.split(":").map(Number);
+  for (let t = h0 * 60 + m0; t <= h1 * 60 + m1; t += 30) out.push(`${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`);
+  return out;
+}
+
+/** "13:30" -> "1:30 PM" */
+export const ampm = (t: string) => {
+  const [h, m] = t.split(":").map(Number);
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+};

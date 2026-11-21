@@ -267,6 +267,16 @@ a.contact:hover { color: var(--accent); }
 .pill.site-dead { background: rgba(252,165,165,.10); color: var(--danger); }
 .pill.site-weak { background: var(--accent-soft); color: var(--accent); }
 
+.reply-note { margin-top: 6px; color: var(--c-interested); }
+.banner > div { min-width: 0; }
+.portfolio-page .settings-actions .btn { white-space: nowrap; }
+.code-line { max-width: 100%; margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--bg); color: var(--text); overflow-x: auto; white-space: pre; }
+.dialog-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgba(0,0,0,.6); }
+.dialog { width: min(720px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.dialog .card-head { margin-bottom: 0; }
+.dialog .card-head h2 { font-size: 18px; }
+.dialog .icon-btn { font-size: 22px; line-height: 1; }
+
 /* scans */
 .segmented { flex-basis: 100%; display: inline-flex; align-self: flex-start; padding: 4px; gap: 4px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--border); width: max-content; max-width: 100%; }
 .segmented button { min-height: 36px; padding: 0 16px; border-radius: 9px; border: 0; background: none; color: var(--muted); cursor: pointer; }

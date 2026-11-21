@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, Depends
 
 from ..deps import require_cron
-from ..services import chat, explore, gmail, health, inbox, outreach, report
+from ..services import chat, explore, gmail, health, inbox, outreach, portfolio_outreach, report
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +34,22 @@ async def tick():
     chat.prune_history()              # chat history is kept for 24 hours
     status = outreach.auto_send()
     replies = {"newReplies": 0} if status == "started" else await _replies()   # a batch checks replies itself
-    return {"ok": True, "autoSend": status, **replies, **({"gap": gap} if gap else {})}
+    portfolio = await _portfolio()
+    return {"ok": True, "autoSend": status, **replies, "portfolio": portfolio, **({"gap": gap} if gap else {})}
+
+
+async def _portfolio() -> dict:
+    """The portfolio mailbox: its own scheduled batch, else a reply check. Never fails the tick."""
+    status = ""
+    try:
+        status = portfolio_outreach.auto_send()
+        replies = 0 if status == "started" else await portfolio_outreach.check_replies()
+        return {"autoSend": status, "newReplies": replies}
+    except gmail.ReadRefused as e:
+        return {"autoSend": status, "inboxError": str(e)}
+    except Exception as e:
+        log.exception("Portfolio tick failed")
+        return {"error": type(e).__name__}
 
 
 @router.post("/explore")
