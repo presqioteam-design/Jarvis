@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
     telegram_webhook_secret: str = ""
     telegram_mode: str = "polling"   # "polling" for local dev, "webhook" when deployed
+    # locally, polling would delete the deployed bot's webhook (Telegram allows one or the other), and the
+    # deployed bot then hears nothing. Polling only takes over when this is true.
+    telegram_take_over: bool = False
 
     # Render sets this to the service's public URL (https://<name>.onrender.com)
     render_external_url: str = ""

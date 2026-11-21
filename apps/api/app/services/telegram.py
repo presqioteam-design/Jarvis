@@ -54,15 +54,37 @@ async def typing() -> None:
             await client.post(api("sendChatAction"), json={"chat_id": get_settings().telegram_chat_id, "action": "typing"})
 
 
+def _webhook_url() -> str:
+    return f"{get_settings().render_external_url.rstrip('/')}/telegram/webhook"
+
+
 async def set_webhook() -> None:
     """When deployed, point Telegram at /telegram/webhook (with our secret) on startup."""
     s = get_settings()
-    url = f"{s.render_external_url.rstrip('/')}/telegram/webhook"
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.post(api("setWebhook"), json={
-            "url": url, "secret_token": s.telegram_webhook_secret, "allowed_updates": ["message"],
+            "url": _webhook_url(), "secret_token": s.telegram_webhook_secret, "allowed_updates": ["message"],
         })
-    log.info("Telegram webhook -> %s: %s", url, r.json().get("description", r.status_code))
+    log.info("Telegram webhook -> %s: %s", _webhook_url(), r.json().get("description", r.status_code))
+
+
+async def ensure_webhook() -> str:
+    """Deployed only: put the webhook back if it's gone (a local run in polling mode removes it, and the
+    deployed bot then hears nothing until the next restart). Called by the cron tick. -> what it found."""
+    s = get_settings()
+    if not (enabled() and s.telegram_mode == "webhook" and s.render_external_url and s.telegram_webhook_secret):
+        return "not used"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            info = (await client.get(api("getWebhookInfo"))).json().get("result", {})
+        if info.get("url") == _webhook_url():
+            return "ok"
+        await set_webhook()
+        log.warning("Telegram webhook was %r; set it again", info.get("url"))
+        return "restored"
+    except (httpx.HTTPError, ValueError) as e:
+        log.warning("Couldn't check the Telegram webhook: %s", e)
+        return "unknown"
 
 
 async def send_voice(audio: bytes, kind: str, caption: str = "") -> None:
@@ -94,7 +116,28 @@ def wanted(msg: dict) -> bool:
 async def poll(handle: Callable[[dict], Awaitable[None]]) -> None:
     """Long-poll for the admin's messages forever. Messages from anyone else are ignored."""
     async with httpx.AsyncClient(timeout=40) as client:
-        await client.post(api("deleteWebhook"))   # polling and a webhook can't both be active
+        # polling and a webhook can't both be active. A webhook here is the deployed Jarvis's: taking it
+        # over would leave that bot deaf, so only do it when asked (TELEGRAM_TAKE_OVER=true).
+        while True:
+            try:
+                response = await client.get(api("getWebhookInfo"))
+                response.raise_for_status()
+                info = response.json()
+                if not isinstance(info, dict) or not info.get("ok"):
+                    raise ValueError("Telegram returned an unsuccessful response")
+                result = info.get("result")
+                if not isinstance(result, dict):
+                    raise ValueError("Telegram returned no webhook state")
+                hook = result.get("url")
+                break
+            except (httpx.HTTPError, ValueError, TypeError) as e:
+                log.warning("Telegram: couldn't check webhook state; local polling won't take over yet: %s", e)
+                await asyncio.sleep(5)
+        if hook and not get_settings().telegram_take_over:
+            log.warning("Telegram: the deployed Jarvis is using this bot, so this local copy won't listen. "
+                        "Set TELEGRAM_TAKE_OVER=true to take it over (the deployed copy gets it back within 30 min).")
+            return
+        await client.post(api("deleteWebhook"))
         offset = 0
         while True:
             try:

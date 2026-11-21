@@ -29,7 +29,7 @@ router = APIRouter(prefix="/voice", tags=["voice"], dependencies=[Depends(requir
 
 MODEL = "gemini-3.8-live"
 VOICE = "Charon"   # a calm, deep voice
-WS_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained"
+WS_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained"
 
 INSTRUCTIONS = """You are J.A.R.V.I.S., the voice of Presqio's sales assistant, talking live with the admin (the Presqio owner).
 LANGUAGE: always speak English, every single reply, with a clear neutral accent. If the admin speaks Hindi, Telugu or any
@@ -44,7 +44,11 @@ or sold on a day, call jarvis_command with "lab day <date> <stock>" and explain 
 ("seven hundred sixty-seven rupees sixty-five"), and call it practice or paper trading, never real money.
 
 You find businesses with an email (hotels, hospitals, schools, restaurants, factories, stores, IT companies, corporate
-offices, security agencies, gyms and salons, coaching centres), email them about Presqio, track replies and report. Use only the DATA below for facts and numbers;
+offices, security agencies, gyms and salons, coaching centres), email them about Presqio, track replies and report.
+You also run the PORTFOLIO campaign: the admin, Jatoth Vinod, is a freelance web and app developer
+(jatothvinod.services). Businesses with no website, only a social or listing page, a broken or a weak site are offered
+his services, signed with his own email and phone. Only ones he approved are emailed; ones without an email are a call
+list. "Portfolio", "website emails" and "website leads" mean this campaign; plain "leads" and "send 10" mean Presqio. Use only the DATA below for facts and numbers;
 if something isn't there, say you don't have it. When the admin asks you to DO something, call the tool
 `jarvis_command` with a short command, then tell them the result in one or two sentences. Commands it understands:
   send <n> | send <n> in <area> | send follow ups | check replies | pause auto | resume auto | auto status
@@ -52,8 +56,10 @@ if something isn't there, say you don't have it. When the admin asks you to DO s
   show leads in <area> | approve all with email in <area> | scan <area> <n>km (every kind) | scan <kind> in <area> <n>km
   explore status | pause explore | resume explore | explore <city> next | scan status | usage | help
   lab status | lab day <YYYY-MM-DD, today or yesterday> [stock] | lab check | lab test | lab swing   (the Trading Lab)
+  portfolio status | send <n> website emails | pause portfolio | resume portfolio | show website leads in <city>
+  | show approved website leads | call list in <city> | check websites of saved leads   (the portfolio campaign)
 For a question about something that changed during the call (like "did anyone reply?"), you may also use the tool with
-the question itself. Never send more than 50 emails. If they ask you to send without a number, ask how many.
+the question itself. Never send more than 50 emails (20 portfolio emails). If they ask you to send without a number, ask how many.
 SHOWING THINGS: the admin sees you on screen as a character who can present visuals. FIRST call `show_on_screen`, then talk
 them through it in two to four sentences using the tool's result. Point out what matters ("as you can see, NVDA peaked just
 short of the level where the trailing stop switches on") instead of reading every number: the screen shows them.
@@ -164,7 +170,7 @@ async def session():
         "outputAudioTranscription": {},
     }
     async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post("https://generativelanguage.googleapis.com/v1alpha/auth_tokens",
+        r = await client.post("https://generativelanguage.googleapis.com/v1beta/auth_tokens",
                               headers={"x-goog-api-key": s.gemini_api_key},
                               json={"uses": 1, "expireTime": _iso(now + timedelta(minutes=30)),
                                     "newSessionExpireTime": _iso(now + timedelta(minutes=2)),

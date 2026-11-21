@@ -50,7 +50,28 @@ def gather() -> dict:
         "hot": [l["name"] for l in hot],
         "auto": outreach.auto_enabled(),
         "lab": _lab(),
+        "portfolio": _portfolio(start.isoformat()),
     }
+
+
+def _portfolio(since: str) -> dict | None:
+    """Today's portfolio emails (Vinod's web development offer), from their own records."""
+    try:
+        from . import portfolio, portfolio_outreach
+        msgs = [m.to_dict() for m in col("portfolio_messages").where(filter=FieldFilter("at", ">=", since)).stream()]
+        out = [m for m in msgs if m.get("direction") == "out"]
+        replies = [m for m in msgs if m.get("direction") == "in" and m.get("kind") != "bounce"]
+        by_status = portfolio.totals()["byStatus"]
+        return {
+            "sent": len(out), "followUps": sum(1 for m in out if m.get("followUpNo")),
+            "replies": len(replies), "interested": sum(1 for m in replies if m.get("kind") == "interested"),
+            "approved": by_status.get("ready", 0), "toReview": by_status.get("new", 0),
+            "hot": [p["name"] for p in portfolio.list_for_chat(None, "interested", limit=5)],
+            "auto": portfolio_outreach.settings()["enabled"],
+        }
+    except Exception:
+        log.exception("Couldn't read the portfolio for the report")
+        return None
 
 
 def _lab() -> dict | None:
@@ -80,6 +101,12 @@ def written(r: dict) -> str:
     ]
     if r["hot"]:
         lines += ["", "🔥 Interested: " + ", ".join(r["hot"])]
+    if p := r.get("portfolio"):
+        lines += ["", f"🌐 Portfolio emails today: {p['sent']} ({p['followUps']} follow-ups), {p['replies']} replies"
+                  + (f", 🔥 {p['interested']} interested" if p["interested"] else ""),
+                  f"   Approved and waiting: {p['approved']} · to review: {p['toReview']:,} · auto-send {'ON' if p['auto'] else 'paused'}"]
+        if p["hot"]:
+            lines.append("   🔥 Interested in a website: " + ", ".join(p["hot"]))
     if r.get("lab"):
         lines += ["", *r["lab"]["lines"]]
     lines += ["", f"🧠 Gemini today: {usage.summary()}"]
@@ -101,6 +128,10 @@ def spoken(r: dict) -> str:
     ]
     if r["hot"]:
         parts.append("Interested: " + ", ".join(r["hot"][:5]) + ". You may want to call them.")
+    if (p := r.get("portfolio")) and (p["sent"] or p["replies"]):
+        parts.append(f"For your web development offer, I sent {p['sent']} email{'s' * (p['sent'] != 1)} and got "
+                     f"{p['replies']} repl{'ies' if p['replies'] != 1 else 'y'}"
+                     + (f", {p['interested']} interested." if p["interested"] else "."))
     if r.get("lab"):
         parts.append(r["lab"]["spoken"])
     return " ".join(parts)

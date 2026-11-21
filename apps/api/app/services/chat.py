@@ -16,7 +16,7 @@ from google.api_core.exceptions import ResourceExhausted
 from ..config import get_settings
 from ..firebase import col, db
 from ..timeutil import now_local, now_utc
-from . import activity, categories, explore, gmail, inbox, leads, llm, outreach, prefs, presqio, report, scanlive, telegram, usage, voice
+from . import activity, categories, explore, gmail, inbox, leads, llm, outreach, portfolio, portfolio_outreach, prefs, presqio, report, scanlive, telegram, usage, voice
 
 log = logging.getLogger(__name__)
 _tasks: set[asyncio.Task] = set()   # keep background scans alive
@@ -31,6 +31,14 @@ SYSTEM = """You are Jarvis, the sales assistant for Presqio. You find businesses
 factories, stores, IT companies, corporate offices, security agencies, gyms and salons, coaching centres) that have
 an email, email them about Presqio,
 track replies and report to the admin (the Presqio owner) you are talking to. Call the admin "Boss" now and then.
+
+You run a second campaign too, the PORTFOLIO: the admin (Jatoth Vinod) is also a freelance web and app developer
+(https://jatothvinod.services). Businesses with no website, only a social or listing page, a broken site or a weak site
+are offered his services (websites, web apps, online stores and QR ordering, mobile apps, SEO, automation), signed by
+him with his email vinodnayakj.321@gmail.com and phone +91 63093 87321. Only businesses he approved are emailed; they
+go out from the same mailbox as Presqio's emails, inside the same daily limit. Ones without an email are a call list.
+"Portfolio", "website emails", "website leads", "web development leads" all mean this campaign; plain "leads" and
+"send 10" mean Presqio.
 
 Reply with a JSON object only:
 {{"reply": "<what you say to the admin>", "action": null}}
@@ -52,6 +60,12 @@ or, when the admin clearly asks you to do something, one of these actions:
 {{"reply": "...", "action": {{"name": "lab_check"}}}}   (replay sessions that finished since the last run)
 {{"reply": "...", "action": {{"name": "lab_swing"}}}}   (the US swing strategy: positions held for days, and buy-and-hold for comparison)
 {{"reply": "...", "action": {{"name": "lab_test"}}}}   (the strategy tester: which smarter rules did best on months of past data)
+{{"reply": "...", "action": {{"name": "portfolio_status"}}}}   (the portfolio campaign: how many need a website, approved, emailed, replied)
+{{"reply": "...", "action": {{"name": "portfolio_send", "count": <1-20>}}}}   (email that many APPROVED portfolio businesses now)
+{{"reply": "...", "action": {{"name": "portfolio_auto", "on": true|false}}}}   (portfolio automatic sending on or off)
+{{"reply": "...", "action": {{"name": "portfolio_list", "city": "<city or null>", "status": "new|ready|emailed|replied|interested", "reach": "email|call|null"}}}}   (a numbered list of portfolio businesses; reach "call" = the call list)
+{{"reply": "...", "action": {{"name": "portfolio_approve_all", "city": "<city>"}}}}   (approve every portfolio business with an email in that city)
+{{"reply": "...", "action": {{"name": "portfolio_check"}}}}   (read the websites of the leads already saved, to find more that need a website)
 {{"reply": "...", "action": {{"name": "scan", "place": "<city, or area and city>", "radius_km": <number or null for a whole city>, "category": "<{category_keys}>"}}}}
 
 Rules:
@@ -63,7 +77,8 @@ Rules:
 - The same for send_follow_ups and check_replies: just start them.
 - "show / list leads (in X)" -> list_leads. status "new" means waiting for review (the default), "ready" means approved.
 - "approve 1 3 5" or "block 2" refer to the numbers in the LAST LIST below. "approve all (with email) in X" -> approve_all.
-- Never more than 50 emails per request.
+- Never more than 50 emails per request (20 for portfolio emails). "approve 1 3" / "block 2" work on whichever list
+  was shown last, Presqio leads or portfolio businesses.
 - A scan searches every category ("all") unless they name one kind of business.
 - Answer questions from the DATA below; never invent businesses, numbers or replies. If the data doesn't have it, say so.
 - Keep replies short: 1-4 sentences, or a short list. Plain text, no markdown tables.
@@ -118,9 +133,22 @@ def context_block() -> str:
         f"NEEDS ATTENTION:\n{hot_lines}\n\n"
         f"SCANS:\n{camp_lines}\n\n"
         f"LAST 48 HOURS:\n{recent_lines}\n\n"
-        f"LAST LIST SHOWN: " + (", ".join(f"{i}. {r['name']}" for i, r in enumerate(_last_list, 1)) or "none") + "\n\n"
+        f"{_portfolio_briefing()}\n\n"
+        f"LAST LIST SHOWN ({'portfolio businesses' if _last_list and _last_list[0].get('kind') == 'prospect' else 'Presqio leads'}): "
+        + (", ".join(f"{i}. {r['name']}" for i, r in enumerate(_last_list, 1)) or "none") + "\n\n"
         + _lab_briefing() + "\n\n" + scanlive.text()
     )
+
+
+def _portfolio_briefing() -> str:
+    try:
+        hot = portfolio.list_for_chat(None, "interested", limit=10) + portfolio.list_for_chat(None, "replied", limit=10)
+        hot_lines = "\n".join(f"- {p['name']} ({p['city']}, {p['area']}): {p['status']}{': ' + p['replySummary'] if p['replySummary'] else ''}"
+                              f"{' · ' + p['phone'] if p['phone'] else ''}" for p in hot) or "- none"
+        return f"PORTFOLIO CAMPAIGN:\n{portfolio_outreach.status_text()}\nPORTFOLIO REPLIES:\n{hot_lines}"
+    except Exception:
+        log.exception("Couldn't read the portfolio for the briefing")
+        return "PORTFOLIO CAMPAIGN: couldn't be read just now."
 
 
 def _lab_briefing() -> str:
@@ -135,16 +163,23 @@ def _lab_briefing() -> str:
 _last_list: list[dict] = []   # the numbered list last shown, so "approve 2" knows which hotel
 
 
-def show(rows: list[dict], title: str) -> str:
+def show(rows: list[dict], title: str, kind: str = "lead") -> str:
+    """A numbered list; "approve 2" / "block 2" then act on the same kind (Presqio lead or portfolio business)."""
     global _last_list
-    _last_list = [{"id": r["id"], "name": r["name"]} for r in rows]
+    _last_list = [{"id": r["id"], "name": r["name"], "kind": kind} for r in rows]
     if not rows:
         return f"{title}: none."
     lines = [f"{title}:"]
     for i, r in enumerate(rows, 1):
         contact = " · ".join(x for x in (r["emails"][0] if r.get("emails") else "", r.get("phone", "")) if x) or "no contact"
-        lines.append(f"{i}. {r['name']} ({r.get('area', '?')}) — {contact}")
-    lines.append("\nReply e.g. \"approve 1 3\", \"block 2\" or \"approve all with email in <area>\".")
+        site = f" [{r['siteLabel'].lower()}{': ' + ', '.join(r['issues'][:2]).lower() if r.get('issues') else ''}]" if kind == "prospect" else ""
+        lines.append(f"{i}. {r['name']} ({r.get('area', '?')}){site} — {contact}")
+    if kind == "prospect" and not any(r.get("emails") for r in rows):
+        lines.append("\nThese have no email: call them about a website. Say e.g. \"block 2\" to drop one.")
+    elif kind == "prospect":
+        lines.append("\nReply e.g. \"approve 1 3\" (only ones with an email can be emailed) or \"block 2\".")
+    else:
+        lines.append("\nReply e.g. \"approve 1 3\", \"block 2\" or \"approve all with email in <area>\".")
     return "\n".join(lines)
 
 
@@ -222,6 +257,14 @@ Kinds: hotels, hospitals, schools, restaurants, factories, retail, IT, offices, 
 • explore status · pause explore / resume explore
 • explore Pune next — put a city first in line
 
+🌐 Portfolio (your web development offer to businesses that need a website)
+• portfolio status — how many need a website, approved, emailed, replied
+• show website leads in Hyderabad — a numbered list (also: show approved website leads, call list in Hyderabad)
+• approve 1 3 / block 2 — numbers from that list
+• send 3 website emails — approved ones, from the outreach mailbox
+• pause portfolio / resume portfolio — its own automatic sending
+• check websites of saved leads — find more among the leads you already have
+
 📈 Trading Lab (paper money, for learning)
 • lab status — totals per market and the last few days
 • lab day 2026-11-06 — every trade that day (add a stock: lab day yesterday HDFCBANK)
@@ -270,6 +313,22 @@ COMMANDS = [
     # "lab NVDA yesterday", "show me NVDA yesterday", "NVDA trade today", "trades yesterday"
     (re.compile(r"^(?:(?:trading\s+)?lab\s+|show\s+(?:me\s+)?)?(?:the\s+)?([A-Za-z&]{2,12})\s+(?:trades?\s+)?(?:on\s+)?(\d{4}-\d{2}-\d{2}|today|yesterday)[.!?]*$", re.I),
      lambda m: {"name": "lab_day", "date": m[2], "symbol": m[1]} if _is_stock(m[1]) else {"name": "lab_day", "date": m[2], "symbol": None} if m[1].lower() in ("trades", "trade", "lab") else None),
+    (re.compile(r"^(?:portfolio|website)s?(?:\s+(?:emails?|leads?|campaign))?\s+status\??$"
+                r"|^how(?:'s|\s+is)\s+(?:the\s+)?portfolio(?:\s+(?:doing|going))?\??$", re.I), lambda m: {"name": "portfolio_status"}),
+    (re.compile(r"^send\s+(\d+)\s+(?:portfolio|website)(?:\s+(?:emails?|mails?|offers?))?[.!]*$"
+                r"|^(?:portfolio|website)\s+send\s+(\d+)[.!]*$", re.I), lambda m: {"name": "portfolio_send", "count": int(m[1] or m[2])}),
+    (re.compile(r"^(pause|stop)\s+(?:the\s+)?(?:portfolio|website)(?:\s+(?:emails?|auto(?:[\s-]?send(?:ing)?)?))?[.!]*$", re.I),
+     lambda m: {"name": "portfolio_auto", "on": False}),
+    (re.compile(r"^(resume|start)\s+(?:the\s+)?(?:portfolio|website)(?:\s+(?:emails?|auto(?:[\s-]?send(?:ing)?)?))?[.!]*$", re.I),
+     lambda m: {"name": "portfolio_auto", "on": True}),
+    (re.compile(r"^(?:show|list)\s+(?:the\s+|me\s+)?(approved\s+|emailed\s+|interested\s+|replied\s+)?(?:portfolio|website)\s+"
+                r"(?:leads?|businesses|list)(?:\s+in\s+(.+?))?[.!?]*$", re.I),
+     lambda m: {"name": "portfolio_list", "status": {"approved": "ready"}.get((m[1] or "").strip().lower(), (m[1] or "new").strip().lower()),
+                "city": m[2]}),
+    (re.compile(r"^(?:show\s+(?:the\s+|me\s+(?:the\s+)?)?)?call\s+list(?:\s+in\s+(.+?))?[.!?]*$", re.I),
+     lambda m: {"name": "portfolio_list", "status": "new", "reach": "call", "city": m[1]}),
+    (re.compile(r"^check\s+(?:the\s+)?websites?(?:\s+of\s+(?:the\s+|my\s+)?(?:saved\s+)?leads)?[.!?]*$", re.I),
+     lambda m: {"name": "portfolio_check"}),
     (re.compile(r"^approve\s+([\d,\s]+|\d+(?:\s*(?:,|and)\s*\d+)*)$", re.I), lambda m: {"name": "approve", "numbers": re.findall(r"\d+", m[1])}),
     (re.compile(r"^block\s+([\d,\s]+|\d+(?:\s*(?:,|and)\s*\d+)*)$", re.I), lambda m: {"name": "block", "numbers": re.findall(r"\d+", m[1])}),
 ]
@@ -386,10 +445,14 @@ def run_action(action: dict) -> tuple[bool, str]:
         rows = leads.list_leads(area["key"] if area else None, status)
         where = f" in {area['area']}" if area else ""
         return False, show(rows, f"{STATUS_WORDS[status]}{where} (first {len(rows)}, emails first)")
+    if name.startswith("portfolio_"):
+        return _portfolio_action(name, action)
     if name in ("approve", "block"):
         chosen = picked(action.get("numbers"))
         if not chosen:
             return False, "Which ones? Show a list first (\"show leads in Madhapur\"), then say e.g. \"approve 1 3\"."
+        if chosen[0].get("kind") == "prospect":
+            return _portfolio_review(name, chosen)
         if name == "approve":
             leads.set_status([c["id"] for c in chosen], "ready")
             return False, "✅ Approved: " + ", ".join(c["name"] for c in chosen) + ". They'll be emailed first on your next \"send\"."
@@ -426,6 +489,53 @@ def run_action(action: dict) -> tuple[bool, str]:
         return False, (f"🔎 Scanning {place} for {categories.label_of(key)} (only ones with an email are saved). "
                        "This can take a while; I'll message you when it's done.")
     return False, ""
+
+
+def _portfolio_action(name: str, action: dict) -> tuple[bool, str]:
+    if name == "portfolio_status":
+        return False, portfolio_outreach.status_text()
+    if name == "portfolio_send":
+        if portfolio_outreach.busy():
+            return False, "I'm still sending the previous portfolio batch. I'll report when it's done."
+        return portfolio_outreach.send_text(max(1, min(int(action.get("count") or 0) or 1, 20)))
+    if name == "portfolio_auto":
+        try:
+            return False, portfolio_outreach.set_auto(bool(action.get("on")))
+        except ValueError as e:
+            return False, f"⚠️ {e}"
+    if name == "portfolio_list":
+        city = None
+        if action.get("city") and str(action["city"]).lower() not in ("none", "null"):
+            city = portfolio.find_city(str(action["city"]))
+            if not city:
+                return False, f"I don't have any portfolio businesses in \"{action['city']}\" yet."
+        status = action.get("status") if action.get("status") in portfolio.STATUS_WORDS else "new"
+        reach = action.get("reach") if action.get("reach") in ("email", "call") else None
+        rows = portfolio.list_for_chat(city, status, reach)
+        what = "Call list" if reach == "call" else f"Website leads, {portfolio.STATUS_WORDS[status]}"
+        return False, show(rows, f"🌐 {what}{' in ' + city if city else ''} (first {len(rows)}{', emails first' if not reach else ''})", "prospect")
+    if name == "portfolio_approve_all":
+        city = portfolio.find_city(str(action.get("city") or ""))
+        if not city:
+            return False, "Which city? Say e.g. “approve all website leads in Hyderabad”."
+        return False, f"✅ Approved {portfolio.approve_all(city, None, None)} portfolio businesses with an email in {city}."
+    if name == "portfolio_check":
+        if portfolio.start_check():
+            return True, "🌐 Reading the websites of the saved leads. I'll message you on Telegram when it's done."
+        return False, "The website check is already running."
+    return False, ""
+
+
+def _portfolio_review(name: str, chosen: list[dict]) -> tuple[bool, str]:
+    if name == "block":
+        for c in chosen:
+            portfolio.block(c["id"])
+        return False, "🚫 Blocked (never contacted): " + ", ".join(c["name"] for c in chosen)
+    changed = portfolio.set_review([c["id"] for c in chosen], True)
+    if changed == 0:
+        return False, "None of those could be approved: only ones with an email that are waiting for review can be."
+    note = f" ({len(chosen) - changed} skipped: no email, or not waiting for review)" if changed < len(chosen) else ""
+    return False, f"✅ Approved {changed} for portfolio emails{note}. Say “send {min(changed, 3)} website emails” or wait for auto-send."
 
 
 def _lab_date(text: str | None) -> str | None:

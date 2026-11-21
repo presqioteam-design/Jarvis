@@ -216,6 +216,10 @@ def send_now(count: int) -> str:
     room = room_today()
     if room <= 0:
         raise ValueError("Today's limit is used (the portfolio's own, or the mailbox's shared with Presqio). More go out tomorrow.")
+    ready = col("prospects").where(filter=FieldFilter("status", "==", "ready")).where(filter=FieldFilter("reach", "==", "email"))
+    if not list(ready.limit(1).stream()):
+        raise ValueError("No approved businesses with an email are waiting. Approve some on the Portfolio page, "
+                         "or say “show website leads” and then “approve 1 3”.")
     if not _start(_batch(min(count, room), follow_ups=False, heading="📤 Portfolio emails")):
         raise ValueError("A batch is already sending.")
     return f"Sending up to {min(count, room)} now, about 40 seconds apart. Telegram gets the list when it's done."
@@ -416,3 +420,57 @@ def preview(pid: str) -> list[dict]:
     sender = me()
     to = p.get("emailedTo") or (p.get("emails") or [""])[0]
     return [{"label": labels[i], "to": to, **vars(portfolio_emails.render(i, p, sender))} for i in range(3)]
+
+
+# ── for chat, voice and Telegram ────────────────────────────────────────────
+
+WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def set_auto(on: bool) -> str:
+    save_settings({"enabled": on})
+    return (f"🌐 Portfolio auto-send is ON: {auto_window()}. I'll message you after every batch." if on
+            else "⏸ Portfolio auto-send is PAUSED. You can still say “send 3 website emails”.")
+
+
+def auto_window() -> str:
+    c = settings()
+    days = c["days"]
+    day_text = f"{WEEKDAYS[days[0]]}–{WEEKDAYS[days[-1]]}" if days == list(range(days[0], days[-1] + 1)) and len(days) > 2 \
+        else ", ".join(WEEKDAYS[d] for d in days)
+    return f"{c['perRun']} every 30 min, {c['from']}–{c['until']} {day_text}, up to {c['dailyCap']} a day"
+
+
+def status_text() -> str:
+    """The portfolio campaign in a few lines, for chat, Telegram and the voice briefing."""
+    t = portfolio.totals()
+    s = t["byStatus"]
+    if not t["cities"]:
+        return ("🌐 Portfolio: no businesses yet. They're collected during business searches; "
+                "say “check websites of saved leads” to look through the leads you already have.")
+    lines = [
+        f"🌐 Portfolio (your web development offer): {sum(s.values())} businesses need a website.",
+        f"To review {s.get('new', 0)}, approved {s.get('ready', 0)}, emailed {s.get('emailed', 0)}, "
+        f"replied {s.get('replied', 0) + s.get('interested', 0)} (interested {s.get('interested', 0)}).",
+        f"Today: {sent_today()} of {settings()['dailyCap']} portfolio emails sent "
+        f"({_mailbox_sent_today()} of {prefs.sending()['dailyCap']} from the mailbox in all, Presqio included).",
+        f"Auto-send: {'ON, ' + auto_window() if settings()['enabled'] else 'paused'}"
+        f"{'; a batch is sending now' if busy() else ''}. Follow-ups due now: {len(due_follow_ups(100))}.",
+    ]
+    for c in t["cities"][:6]:
+        groups = ", ".join(f"{site_label(g)} {n}" for g, n in sorted(c["toReviewByGroup"].items(), key=lambda x: -x[1]))
+        lines.append(f"• {c['city']}: {c['total']} in all; to review: {groups or 'none'}; call list {c['callList']}")
+    return "\n".join(lines)
+
+
+def site_label(group: str) -> str:
+    from . import site_check
+    return site_check.GROUP_LABELS.get(group, group).lower()
+
+
+def send_text(count: int) -> tuple[bool, str]:
+    """"send 3 website emails" from chat/voice/Telegram -> (started, message)."""
+    try:
+        return True, "🌐 " + send_now(count)
+    except ValueError as e:
+        return False, f"⚠️ {e}"

@@ -356,3 +356,47 @@ async def _check_saved_leads() -> None:
         state["error"] = "Stopped part-way. Press Continue to carry on from where it stopped."
         prefs.save_portfolio({"check": state})
         activity.log("error", f"Portfolio website check stopped: {type(e).__name__}")
+
+
+# ── for chat, voice and Telegram ────────────────────────────────────────────
+
+STATUS_WORDS = {"new": "to review", "ready": "approved", "emailed": "emailed", "replied": "replied",
+                "interested": "interested", "not_interested": "not interested", "unsubscribed": "asked to stop",
+                "bounced": "bounced"}
+
+
+def totals() -> dict:
+    """{"cities": [{"city", "total", "byStatus", "toReviewByGroup", "callList"}], "byStatus": {...}} from the city summaries."""
+    out, overall = [], {}
+    for c in cities():
+        by_status = {st: sum(v for by_reach in sites.values() for v in by_reach.values()) for st, sites in c["n"].items()}
+        by_status = {k: v for k, v in by_status.items() if v}
+        new = c["n"].get("new", {})
+        out.append({
+            "city": c["city"], "total": c["total"], "byStatus": by_status,
+            "toReviewByGroup": {g: sum(r.values()) for g, r in new.items() if sum(r.values())},
+            "callList": sum(r.get("call", 0) for r in new.values()),
+        })
+        for k, v in by_status.items():
+            overall[k] = overall.get(k, 0) + v
+    return {"cities": out, "byStatus": overall}
+
+
+def find_city(text: str | None) -> str | None:
+    """The city with prospects whose name matches (case-insensitive, start of the name is enough)."""
+    if not text:
+        return None
+    t = text.split(",")[-1].strip().lower()
+    names = [c["city"] for c in cities()]
+    return next((n for n in names if n.lower() == t), None) or next((n for n in names if n.lower().startswith(t)), None)
+
+
+def list_for_chat(city: str | None, status: str = "new", reach: str | None = None, limit: int = 15) -> list[dict]:
+    q = col("prospects").where(filter=FieldFilter("status", "==", status))
+    if city:
+        q = q.where(filter=FieldFilter("city", "==", city))
+    if reach:
+        q = q.where(filter=FieldFilter("reach", "==", reach))
+    rows = [view(d.to_dict(), d.id) for d in q.limit(limit * 3).stream()]
+    rows.sort(key=lambda p: (p["reach"] != "email", p["name"].lower()))   # emails first
+    return rows[:limit]

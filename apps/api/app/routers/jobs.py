@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, Depends
 
 from ..deps import require_cron
-from ..services import chat, explore, gmail, health, inbox, outreach, portfolio_outreach, report
+from ..services import chat, explore, gmail, health, inbox, outreach, portfolio_outreach, report, telegram
 
 log = logging.getLogger(__name__)
 
@@ -29,13 +29,15 @@ async def tick():
     """Cron, every 30 min in the day: start an automatic batch if it's sending time,
     otherwise just check replies. Also keeps the free Render instance awake."""
     prev = health.record_run("tick")  # so Settings can tell if the schedule stopped
+    webhook = await telegram.ensure_webhook()   # a local run may have taken the bot's webhook away
     gap = await health.gap_warning(prev)   # and Telegram hears about any runs that never came
     await explore.morning_summary()   # last night's explorer results, once
     chat.prune_history()              # chat history is kept for 24 hours
     status = outreach.auto_send()
     replies = {"newReplies": 0} if status == "started" else await _replies()   # a batch checks replies itself
     portfolio = await _portfolio()
-    return {"ok": True, "autoSend": status, **replies, "portfolio": portfolio, **({"gap": gap} if gap else {})}
+    return {"ok": True, "autoSend": status, **replies, "portfolio": portfolio, "telegramWebhook": webhook,
+            **({"gap": gap} if gap else {})}
 
 
 async def _portfolio() -> dict:
