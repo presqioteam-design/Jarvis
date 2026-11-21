@@ -8,6 +8,7 @@ import Dashboard from "./pages/Dashboard";
 import Chat from "./pages/Chat";
 import Campaigns from "./pages/Campaigns";
 import Leads from "./pages/Leads";
+import Portfolio from "./pages/Portfolio";
 import Voice from "./pages/Voice";
 import Settings from "./pages/Settings";
 import TradingLab from "./tradinglab/TradingLab";
@@ -21,6 +22,7 @@ export default function App() {
         <Route path="/chat" element={<Chat />} />
         <Route path="/campaigns" element={<Campaigns />} />
         <Route path="/leads" element={<Leads />} />
+        <Route path="/portfolio" element={<Portfolio />} />
         <Route path="/voice" element={<Voice />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/trading-lab" element={<TradingLab />} />

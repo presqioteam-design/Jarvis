@@ -153,3 +153,33 @@ export type ConnectionsView = {
 export const getConnections = (refresh = false) => call<ConnectionsView>(`/settings/connections${refresh ? "?refresh=true" : ""}`);
 export const checkTomTom = () => call<ServiceStatus>("/settings/connections/tomtom", {});
 export const saveChatHours = (hours: number) => call<{ chatHours: number }>("/settings/chat-history", { hours });
+
+// ── Portfolio: businesses that need a website ───────────────────────────────
+export type SiteGroup = "none" | "social" | "listing" | "dead" | "weak";
+export type PortfolioCity = {
+  city: string;
+  total: number;
+  site: Partial<Record<SiteGroup, { email?: number; call?: number }>>;
+  category: Record<string, number>;
+};
+export type PortfolioCheck = { running: boolean; checked: number; added: number; finished: boolean; finishedAt: string | null; error: string };
+export type PortfolioView = {
+  collect: boolean;
+  check: PortfolioCheck;
+  cities: PortfolioCity[];
+  groups: { key: SiteGroup; label: string }[];
+  categories: { key: string; label: string }[];
+};
+export type Prospect = {
+  id: string; name: string; category: string; categoryLabel: string; city: string; area: string; address: string;
+  phone: string; emails: string[]; website: string; site: SiteGroup; siteLabel: string; issues: string[];
+  reach: "email" | "call"; status: string;
+};
+export const getPortfolio = () => call<PortfolioView>("/portfolio");
+export const setPortfolioCollect = (collect: boolean) => call<PortfolioView>("/portfolio/collect", { collect });
+export const startPortfolioCheck = (restart = false) => call<PortfolioView>("/portfolio/check", { restart });
+export const listProspects = (f: { city: string; site?: string; reach?: string; category?: string; after?: string }) =>
+  call<{ items: Prospect[]; next: string | null }>(
+    `/portfolio/prospects?${new URLSearchParams(Object.entries(f).filter(([, v]) => v) as [string, string][])}`);
+export const skipProspect = (id: string) => call<{ ok: true }>(`/portfolio/${encodeURIComponent(id)}/skip`, {});
+export const blockProspect = (id: string) => call<{ ok: true }>(`/portfolio/${encodeURIComponent(id)}/block`, {});

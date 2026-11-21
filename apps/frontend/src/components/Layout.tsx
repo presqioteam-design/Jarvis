@@ -8,6 +8,7 @@ const NAV: { to: string; label: string; icon: IconName; soon?: boolean }[] = [
   { to: "/dashboard", label: "Dashboard", icon: "dashboard" },
   { to: "/campaigns", label: "Find businesses", icon: "campaign" },
   { to: "/leads", label: "Leads", icon: "leads" },
+  { to: "/portfolio", label: "Portfolio", icon: "globe" },
   { to: "/voice", label: "Talk to Jarvis", icon: "mic" },
   { to: "/chat", label: "Ask Jarvis", icon: "chat" },
   { to: "/trading-lab", label: "Trading Lab", icon: "chart" },

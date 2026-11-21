@@ -21,7 +21,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 from ..firebase import col, db
 from ..timeutil import now_utc
-from . import activity, categories, crawler, keepalive, prefs, scanlive, sources, telegram, usage
+from . import activity, categories, crawler, keepalive, portfolio, prefs, scanlive, sources, telegram, usage
 
 log = logging.getLogger(__name__)
 SAME_PLACE_M = 200      # two results this close with similar names are one hotel
@@ -271,6 +271,10 @@ async def save_reachable(found: list[dict], campaign_id: str, city: str, fallbac
     saved, and addresses on the do-not-contact list, are skipped."""
     places = {h["id"]: h for h in found if h["name"] and (h["emails"] or h["website"])}
     sites = list({h["website"] for h in places.values() if not h["emails"] and not crawler.is_aggregator(h["website"])})
+    # the portfolio list also wants to know whether sites that already gave an email are any good
+    collect_portfolio = portfolio.enabled()
+    if collect_portfolio:
+        sites = list({*sites, *(h["website"] for h in places.values() if h["emails"] and portfolio.needs_reading(h))})
     live = scanlive.get()
     on_site = None
     if live:
@@ -280,6 +284,9 @@ async def save_reachable(found: list[dict], campaign_id: str, city: str, fallbac
             h = owner.get(site, {"name": site, "category": ""})
             live.site(h["name"], categories.get(h.get("category")).label, [e for e in result.get("emails", []) if crawler.usable(e)])
     crawled = await crawler.crawl_many(sites, on_done=on_site) if sites else {}
+    if collect_portfolio:
+        # every business the map found, not just these: no website at all is what the portfolio wants
+        await portfolio.collect(found, crawled, city, fallback_area)
     reachable = []
     for h in places.values():
         info = crawled.get(h["website"], {})

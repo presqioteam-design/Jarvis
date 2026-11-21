@@ -254,6 +254,19 @@ a.contact:hover { color: var(--accent); }
 .pill.customer { background: rgba(52,211,153,.2); color: var(--c-customer); }
 .pill.unsubscribed, .pill.bounced, .pill.not_interested { background: rgba(252,165,165,.10); color: var(--danger); }
 
+/* portfolio: businesses that need a website */
+.portfolio-controls { display: flex; flex-direction: column; gap: 18px; }
+.portfolio-controls .settings-head + .settings-head { padding-top: 18px; border-top: 1px solid var(--border); }
+.portfolio-controls h2 { font-size: 16px; }
+.portfolio-page .filters .segmented { flex-basis: auto; }
+.site-issues { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.site-issues .issue { color: var(--muted); }
+.site-issues .issue + .issue::before { content: "·"; margin-right: 6px; }
+.pill.site-none { background: rgba(245,165,36,.14); color: var(--c-interested); }
+.pill.site-social, .pill.site-listing { background: rgba(167,139,250,.14); color: var(--c-replied); }
+.pill.site-dead { background: rgba(252,165,165,.10); color: var(--danger); }
+.pill.site-weak { background: var(--accent-soft); color: var(--accent); }
+
 /* scans */
 .segmented { flex-basis: 100%; display: inline-flex; align-self: flex-start; padding: 4px; gap: 4px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--border); width: max-content; max-width: 100%; }
 .segmented button { min-height: 36px; padding: 0 16px; border-radius: 9px; border: 0; background: none; color: var(--muted); cursor: pointer; }

@@ -5,10 +5,12 @@ Reads the home page plus up to two contact/about pages; nothing else.
 
 import asyncio
 import re
+import time
 from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from . import site_check
 from .sources import clean_phone
 
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
@@ -71,21 +73,28 @@ def contact_links(html: str, base: str) -> list[str]:
 
 
 async def crawl(client: httpx.AsyncClient, website: str) -> dict:
-    """-> {"emails": [...], "phone": "+91..." or ""}; never raises."""
+    """-> {"emails": [...], "phone": "+91..." or "", "home": site_check.read_home(...)}; never raises.
+    "home" describes the home page (or why it didn't load), for the portfolio site check."""
     emails: list[str] = []
     phone = ""
     pages = [website]
     seen = set()
+    home: dict | None = None
     while pages and len(seen) < 3:
         url = pages.pop(0)
         if url in seen:
             continue
         seen.add(url)
+        started = time.monotonic()
         try:
             r = await client.get(url)
-            if r.status_code >= 400 or "html" not in r.headers.get("content-type", ""):
-                continue
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, ValueError) as e:
+            if home is None:
+                home = site_check.failed_home(e)
+            continue
+        if home is None:
+            home = site_check.read_home(r, time.monotonic() - started)
+        if r.status_code >= 400 or "html" not in r.headers.get("content-type", ""):
             continue
         html = r.text
         emails += [e for e in extract_emails(html) if e not in emails]
@@ -94,7 +103,7 @@ async def crawl(client: httpx.AsyncClient, website: str) -> dict:
             phone = clean_phone(tels[0]) if tels else ""
         if len(seen) == 1:
             pages += contact_links(html, str(r.url))
-    return {"emails": emails[:3], "phone": phone}
+    return {"emails": emails[:3], "phone": phone, "home": home}
 
 
 async def crawl_many(websites: list[str], concurrency: int = 10, on_done=None) -> dict[str, dict]:

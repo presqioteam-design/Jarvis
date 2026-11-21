@@ -202,3 +202,19 @@ def save_chat_hours(hours: int) -> int:
         raise ValueError("Keep chats for 1 day, 3 days or 1 week.")
     _save({"chatHours": hours})
     return hours
+
+
+# ── Portfolio (the web-development prospects list) ──────────────────────────
+
+def portfolio() -> dict:
+    """{"collect": bool, "check": {...progress of the saved-leads check}}."""
+    return _doc().get("portfolio") or {}
+
+
+def save_portfolio(patch: dict) -> None:
+    """Each key is replaced whole (a merge would keep the old check progress after "start again")."""
+    try:
+        ref().update({f"portfolio.{k}": v for k, v in patch.items()})
+    except Exception:   # settings/main doesn't exist yet
+        ref().set({"portfolio": patch}, merge=True)
+    forget()
