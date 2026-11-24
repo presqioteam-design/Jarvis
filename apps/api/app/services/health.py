@@ -203,8 +203,7 @@ async def check_tomtom() -> dict:
         _tomtom = _bad("No TomTom key: add TOMTOM_API_KEY in Render.")
     else:
         try:
-            await sources.geocode("Hyderabad")
-            usage.count_map_searches(1)
+            await sources.geocode("Hyderabad")   # TomTom's Geocoding API: its own allowance, not a search
             _tomtom = _ok("Key works (map searches for scans and the night explorer)")
         except httpx.HTTPStatusError as e:
             _tomtom = _bad("TomTom refused the key, or today's free searches are used up." if e.response.status_code in (401, 403, 429)

@@ -45,12 +45,13 @@ async def geocode(place: str) -> dict:
 
 
 class TomTomLimit(Exception):
-    """TomTom refused. `out_of_credits`: the account has no search credits left (TomTom bills searches
-    against credits; the free ones run out), so waiting won't help; otherwise a rate limit."""
+    """No TomTom search now. `out_of_credits`: waiting won't help today, so carry on with OpenStreetMap
+    alone: either TomTom has no credits left, or (`budget`) today's share of the month's free searches
+    is used. Otherwise a rate limit: pause and try again later."""
 
-    def __init__(self, reason: str = "", out_of_credits: bool = False):
-        super().__init__(reason or "TomTom refused (daily allowance or too many searches)")
-        self.reason, self.out_of_credits = reason, out_of_credits
+    def __init__(self, reason: str = "", out_of_credits: bool = False, budget: bool = False):
+        super().__init__(reason or "TomTom refused (too many searches)")
+        self.reason, self.out_of_credits, self.budget = reason, out_of_credits or budget, budget
 
 
 def _refusal(r: httpx.Response) -> TomTomLimit:
@@ -60,6 +61,8 @@ def _refusal(r: httpx.Response) -> TomTomLimit:
         err = {}
     code, message = err.get("code", ""), err.get("message", "")
     credits = code == "InsufficientFunds" or "credit" in message.lower()
+    if credits:
+        usage.mark_month_used_up()
     reason = ("TomTom account is out of search credits" if credits
               else f"TomTom refused ({r.status_code}{': ' + message if message else ''})")
     return TomTomLimit(reason, out_of_credits=credits)
@@ -77,6 +80,8 @@ async def _tomtom_get(client: httpx.AsyncClient, url: str, params: dict) -> http
     """One TomTom search, paced, retried when TomTom says "too many" (429). Raises TomTomLimit
     if it keeps refusing (or 403: the daily allowance or the key)."""
     global _last_search
+    if usage.map_searches_left_today() <= 0:
+        raise TomTomLimit("today's share of TomTom's monthly free searches is used", budget=True)
     for wait in (*RETRY_WAITS_S, None):
         async with _pace:
             gap = MIN_GAP_S - (asyncio.get_running_loop().time() - _last_search)
@@ -205,8 +210,11 @@ def clean_url(raw: str) -> str:
     return raw if raw.startswith(("http://", "https://")) else f"http://{raw}"
 
 
-async def note_out_of_credits() -> None:
-    """Tell the admin once a day that TomTom has no credits and searches use OpenStreetMap alone."""
+async def note_out_of_credits(e: "TomTomLimit | None" = None) -> None:
+    """Tell the admin once a day that TomTom has no credits and searches use OpenStreetMap alone.
+    Today's share of the monthly searches running out is routine: no message for that."""
+    if e is not None and e.budget:
+        return
     from ..firebase import col
     from ..timeutil import now_local
     from . import telegram

@@ -206,7 +206,8 @@ def pending_cats(area: dict, wanted: list[str]) -> list[str]:
 async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
     box = leads.square_around(area["lat"], area["lon"], AREA_RADIUS_M)
     found, squares, searched, failed = {}, 0, [], []
-    no_credits = False   # TomTom has no search credits left: OpenStreetMap alone covers the area
+    no_credits = False   # no TomTom searches left (credits, or today's share): OpenStreetMap alone covers the area
+    credit_error = None
     async with httpx.AsyncClient(timeout=30) as client:
         live = scanlive.get()
         for n, key in enumerate(cats):
@@ -227,6 +228,7 @@ async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
             except sources.TomTomLimit as e:
                 if e.out_of_credits:
                     no_credits = True   # waiting won't help: carry on with OpenStreetMap only
+                    credit_error = e
                 else:
                     failed.append(f"{cat.label}: {e}")
                 break   # TomTom said no: the rest would be refused too
@@ -237,7 +239,7 @@ async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
             if live:
                 live.kinds_done(n + 1, len(cats))
     if no_credits:
-        await sources.note_out_of_credits()
+        await sources.note_out_of_credits(credit_error)
         # every kind still gets OpenStreetMap below, so the area counts as searched for all of them;
         # otherwise the explorer would try the same area every night until TomTom has credits again
         searched = list(dict.fromkeys([*searched, *cats]))

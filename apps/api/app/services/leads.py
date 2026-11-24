@@ -69,8 +69,8 @@ def by_status(status: str, limit: int = 20) -> list[dict]:
 # big city uses most of that, so: one city scan a day, one scan at a time.
 
 QUOTA_STOPPED = "Firestore's free daily limit was reached. Progress is saved: press Resume after 12:30 PM IST."
-# TomTom's free plan allows about 2,500 searches a day and the night explorer uses up to ~950 of them.
-# Searching every category costs ~25 searches per square, so a big scan pauses here and resumes later.
+# TomTom's free plan allows 2,500 searches a MONTH, shared out day by day (services/usage.py); past
+# today's share a scan carries on with OpenStreetMap. This cap is a second guard for a paid plan.
 SCAN_SEARCH_BUDGET = 1300
 TOMTOM_STOPPED = ("Paused to stay within TomTom's free daily map searches. Progress is saved: "
                   "press Resume tomorrow to carry on from here.")
@@ -254,9 +254,10 @@ async def scan_squares(ref, scan: dict, campaign_id: str, city: str, cats: list[
                     # waiting won't bring credits back: finish with OpenStreetMap alone (the next phase)
                     queue.clear()
                     await checkpoint()
-                    await sources.note_out_of_credits()
+                    await sources.note_out_of_credits(e)
                     if live:
-                        live.event("🗺", "TomTom is out of credits: using OpenStreetMap only")
+                        live.event("🗺", ("Today's share of TomTom's monthly searches is used" if e.budget
+                                         else "TomTom is out of credits") + ": using OpenStreetMap only")
                     return
                 queue.insert(0, box)   # do this square again on resume
                 await checkpoint()

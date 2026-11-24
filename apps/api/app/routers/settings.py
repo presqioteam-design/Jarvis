@@ -204,9 +204,10 @@ def unblock(body: KeyIn):
 def get_usage():
     tz = get_settings().tz
     midnight_ist = datetime.combine(now_local().date() + timedelta(days=1), dtime.min, tzinfo=tz).isoformat()
-    midnight_utc = datetime.combine(now_utc().date() + timedelta(days=1), dtime.min, tzinfo=timezone.utc).isoformat()
+    first_of_month_utc = datetime.combine((now_utc().date().replace(day=28) + timedelta(days=4)).replace(day=1), dtime.min,
+                                          tzinfo=timezone.utc).isoformat()
     sent_f, ai_f, maps_f, db_f, cfg_f = (_pool.submit(outreach.sent_today), _pool.submit(usage.today),
-                                         _pool.submit(usage.map_searches_today), _pool.submit(dbusage.today),
+                                         _pool.submit(usage.map_searches_this_month), _pool.submit(dbusage.today),
                                          _pool.submit(prefs.sending))
     ai = ai_f.result()
     meters = [
@@ -218,8 +219,10 @@ def get_usage():
          "note": "Talk to Jarvis."},
         {"key": "tts", "label": "Spoken replies", "used": ai["tts"], "limit": usage.limit("tts"), "resetsAt": midnight_ist,
          "note": "The voice note in the daily report."},
-        {"key": "maps", "label": "Map searches", "used": maps_f.result(), "limit": usage.MAP_SEARCHES_PER_DAY, "resetsAt": midnight_utc,
-         "note": "TomTom's free daily searches, used by scans and the night explorer."},
+        {"key": "maps", "label": "Map searches this month", "used": maps_f.result(), "limit": usage.MAP_SEARCHES_PER_MONTH,
+         "resetsAt": first_of_month_utc,
+         "note": f"TomTom's free searches a month, shared out by day (today's share: {usage.map_allowance_today()}). "
+                 "Past it, scans and the night explorer use OpenStreetMap alone."},
     ]
     return {"meters": meters, "database": db_f.result()}
 
