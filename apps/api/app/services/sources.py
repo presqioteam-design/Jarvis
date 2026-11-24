@@ -28,7 +28,7 @@ async def geocode(place: str) -> dict:
             params={"key": get_settings().tomtom_api_key, "countrySet": "IN", "limit": 1},
         )
         if r.status_code in (403, 429):
-            raise TomTomLimit()
+            raise _refusal(r)
         r.raise_for_status()
         results = r.json().get("results", [])
     if not results:
@@ -45,7 +45,24 @@ async def geocode(place: str) -> dict:
 
 
 class TomTomLimit(Exception):
-    """TomTom refused: the free daily searches are used up (or the key is over its rate)."""
+    """TomTom refused. `out_of_credits`: the account has no search credits left (TomTom bills searches
+    against credits; the free ones run out), so waiting won't help; otherwise a rate limit."""
+
+    def __init__(self, reason: str = "", out_of_credits: bool = False):
+        super().__init__(reason or "TomTom refused (daily allowance or too many searches)")
+        self.reason, self.out_of_credits = reason, out_of_credits
+
+
+def _refusal(r: httpx.Response) -> TomTomLimit:
+    try:
+        err = r.json().get("detailedError") or {}
+    except ValueError:
+        err = {}
+    code, message = err.get("code", ""), err.get("message", "")
+    credits = code == "InsufficientFunds" or "credit" in message.lower()
+    reason = ("TomTom account is out of search credits" if credits
+              else f"TomTom refused ({r.status_code}{': ' + message if message else ''})")
+    return TomTomLimit(reason, out_of_credits=credits)
 
 
 # TomTom's free plan also limits searches per second. From the server (close to TomTom) back-to-back
@@ -73,7 +90,7 @@ async def _tomtom_get(client: httpx.AsyncClient, url: str, params: dict) -> http
             await asyncio.sleep(wait)
             continue
         if r.status_code in (403, 429):
-            raise TomTomLimit()
+            raise _refusal(r)
         r.raise_for_status()
         return r
     raise TomTomLimit()
@@ -186,3 +203,17 @@ def clean_url(raw: str) -> str:
     if not raw:
         return ""
     return raw if raw.startswith(("http://", "https://")) else f"http://{raw}"
+
+
+async def note_out_of_credits() -> None:
+    """Tell the admin once a day that TomTom has no credits and searches use OpenStreetMap alone."""
+    from ..firebase import col
+    from ..timeutil import now_local
+    from . import telegram
+    ref, today = col("settings").document("main"), now_local().date().isoformat()
+    if (ref.get().to_dict() or {}).get("tomtomNoCreditsOn") == today:
+        return
+    ref.set({"tomtomNoCreditsOn": today}, merge=True)
+    await telegram.send("🗺 TomTom says the account is out of search credits, so business searches and the night "
+                        "explorer are using OpenStreetMap alone for now (fewer businesses, but still free). "
+                        "Add credits or a plan at developer.tomtom.com to get TomTom back; nothing else needs changing.")

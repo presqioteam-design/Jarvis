@@ -206,6 +206,7 @@ def pending_cats(area: dict, wanted: list[str]) -> list[str]:
 async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
     box = leads.square_around(area["lat"], area["lon"], AREA_RADIUS_M)
     found, squares, searched, failed = {}, 0, [], []
+    no_credits = False   # TomTom has no search credits left: OpenStreetMap alone covers the area
     async with httpx.AsyncClient(timeout=30) as client:
         live = scanlive.get()
         for n, key in enumerate(cats):
@@ -223,15 +224,24 @@ async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
                     for h in places:
                         found.setdefault(h["id"], h)
                 searched.append(key)
-            except sources.TomTomLimit:
-                failed.append(f"{cat.label}: TomTom refused (daily allowance or too many searches)")
-                break   # TomTom said no: the rest would be refused too; they're tried next time
+            except sources.TomTomLimit as e:
+                if e.out_of_credits:
+                    no_credits = True   # waiting won't help: carry on with OpenStreetMap only
+                else:
+                    failed.append(f"{cat.label}: {e}")
+                break   # TomTom said no: the rest would be refused too
             except httpx.HTTPError as e:
                 failed.append(f"{cat.label}: {type(e).__name__}")   # one kind failing doesn't lose the area
                 log.warning("Explorer: %s in %s failed: %s", key, area["name"], e)
             squares += used
             if live:
                 live.kinds_done(n + 1, len(cats))
+    if no_credits:
+        await sources.note_out_of_credits()
+        # every kind still gets OpenStreetMap below, so the area counts as searched for all of them;
+        # otherwise the explorer would try the same area every night until TomTom has credits again
+        searched = list(dict.fromkeys([*searched, *cats]))
+        failed = []
     if not searched:
         raise RuntimeError("TomTom searches all failed: " + "; ".join(failed))
     # OpenStreetMap lists many more websites and emails than TomTom for most categories
@@ -248,7 +258,7 @@ async def explore_area(city: str, area: dict, cats: list[str]) -> dict:
     add_to_city(city, rows)
     by_cat = dict(Counter(r["category"] for r in rows))
     return {"found": len(found), "added": len(rows), "withEmail": len(rows), "squares": squares, "byCategory": by_cat,
-            "searched": searched, "failed": failed}
+            "searched": searched, "failed": failed, **({"osmOnly": True} if no_credits else {})}
 
 
 def add_to_city(city: str, rows: list[dict]) -> None:

@@ -249,7 +249,15 @@ async def scan_squares(ref, scan: dict, campaign_id: str, city: str, cats: list[
                     found += places
                     if full:
                         full_keys.append(cat.key)
-            except sources.TomTomLimit:
+            except sources.TomTomLimit as e:
+                if e.out_of_credits:
+                    # waiting won't bring credits back: finish with OpenStreetMap alone (the next phase)
+                    queue.clear()
+                    await checkpoint()
+                    await sources.note_out_of_credits()
+                    if live:
+                        live.event("🗺", "TomTom is out of credits: using OpenStreetMap only")
+                    return
                 queue.insert(0, box)   # do this square again on resume
                 await checkpoint()
                 raise ScanPaused()
